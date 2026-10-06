@@ -1,0 +1,6 @@
+{
+  "name": "Arkham Horror 1987 Online",
+  "description": "Real-time online cooperative adaptation of the classic 1987 Arkham Horror board game with authentic boards, encounters, mythos phases, and multiplayer room support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
