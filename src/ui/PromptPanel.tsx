@@ -6,6 +6,7 @@ import type { Answer, GameState, Prompt } from '../engine';
 import { cardUrl, investigatorUrl, monsterUrl } from './assets';
 import { useZoom } from './Zoom';
 import { MonsterFacts } from './Info';
+import { Tip } from './Tips';
 
 interface Props {
   state: GameState;
@@ -60,6 +61,7 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
           {player && <span className="text-sm text-stone-400">· {player}</span>}
         </div>
       )}
+      <div className="mb-2 empty:hidden"><Tip prompt={prompt} /></div>
       <h2 className="font-display text-2xl leading-tight text-amber-50">{prompt.title}</h2>
       {prompt.text && <p className="mt-2 whitespace-pre-line rounded-md border-l-2 border-amber-300/40 bg-stone-950/50 px-3 py-2 text-base leading-relaxed text-stone-200">{prompt.text}</p>}
     </div>

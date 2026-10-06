@@ -7,6 +7,7 @@ import { Reference } from './Reference';
 import { ZoomProvider } from './Zoom';
 import { InvestigatorDock, type DockMode } from './InvestigatorPanel';
 import { PromptPanel } from './PromptPanel';
+import { MythosRecap, SoundToggle, useFeedback } from './Feedback';
 
 const LOG_COLORS = { mythos: 'text-purple-300', combat: 'text-red-300', roll: 'text-stone-400', info: 'text-amber-200', warn: 'text-orange-300' } as const;
 
@@ -35,6 +36,7 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
     try { localStorage.setItem('arkham.dock', m); } catch { /* private mode */ }
   };
   const [seenLog, setSeenLog] = useState(() => state.log.length);
+  const { recap, dismissRecap } = useFeedback(state, snap.version);
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
     if (showLog) setSeenLog(state.log.length);
@@ -81,7 +83,8 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
               {unread > 0 && !showLog && <span className="absolute -right-1.5 -top-1.5 rounded-full bg-amber-300 px-1.5 text-[10px] font-bold text-stone-900">{unread > 99 ? '99+' : unread}</span>}
             </button>
             <button className={btn} onClick={() => setShowRef(true)}>Reference</button>
-            <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()}>Undo</button>
+            <SoundToggle className={btn} />
+            <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()} title="Take back your last decision">Undo</button>
             <button className={btn} onClick={download}>Save file</button>
             <button className={btn} onClick={onQuit}>Menu</button>
           </div>
@@ -123,6 +126,7 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
             {chat}
           </div>
         </main>
+        {recap && <MythosRecap lines={recap} onClose={dismissRecap} />}
         {showRef && <Reference onClose={() => setShowRef(false)} />}
       </div>
     </ZoomProvider>

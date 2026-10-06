@@ -7,6 +7,7 @@ import { nodeLabel } from '../engine/board';
 import { LOCATIONS } from '../engine/data/locations';
 import type { GameState, Investigator } from '../engine';
 import { cardUrl, investigatorUrl } from './assets';
+import { itemNotes, spellNotes } from './describe';
 import { WorldFacts } from './Info';
 import { useZoom } from './Zoom';
 
@@ -248,6 +249,7 @@ function Full({ state, inv }: { state: GameState; inv: Investigator }) {
                     {it.oneUse && <Chip cls="bg-stone-700">one use</Chip>}
                   </span>
                   <span className="mt-0.5 block text-xs leading-snug text-stone-300">{it.text}</span>
+                  <span className="mt-1 block text-xs leading-snug text-amber-100/80">{itemNotes(it).join(' ')}</span>
                 </span>
               </button>
             );
@@ -274,6 +276,7 @@ function Full({ state, inv }: { state: GameState; inv: Investigator }) {
                     {used && <Chip cls="bg-stone-600">used this turn</Chip>}
                   </span>
                   <span className="mt-0.5 block text-xs leading-snug text-stone-300">{sp.text}</span>
+                  <span className="mt-1 block text-xs leading-snug text-purple-200/80">{spellNotes(sp).join(' ')}</span>
                 </span>
               </button>
             );

@@ -1,4 +1,5 @@
 // Plain-language descriptions of monsters, locations and Other Worlds for tooltips and cards.
+import type { ItemDef, SpellDef } from '../engine/data/cards';
 import type { MonsterDef, Special } from '../engine/data/monsters';
 import { LOCATIONS } from '../engine/data/locations';
 import { WORLDS } from '../engine/data/otherWorlds';
@@ -128,4 +129,27 @@ export function locationSummary(id: LocationId): LocationSummary {
 export function worldSummary(id: WorldId, full = false) {
   const w = WORLDS[id];
   return { name: w.name, color: w.color, lines: tableLines(w.table, full), odds: oddsOf(w.table) };
+}
+
+// ---- Cards in plain words ---------------------------------------------------------------------
+
+
+export function itemNotes(it: ItemDef): string[] {
+  const n: string[] = [];
+  if (it.attack) n.push(`Adds +${it.attack} to your fight total${it.magical ? ' (magical damage)' : ''}.`);
+  if (it.hands) n.push(`Needs ${it.hands} hand${it.hands > 1 ? 's' : ''}; you can use 2 hands' worth in a fight.`);
+  if (it.gun) n.push('A gun: useless against monsters unharmed by guns.');
+  if (it.magical && !it.attack) n.push('Magical: works on things ordinary items cannot touch.');
+  if (it.oneTurn) n.push('Lasts for the whole turn, then it is discarded.');
+  else if (it.oneUse) n.push('Discarded after one use.');
+  else if (it.attack) n.push('Keep it: usable every fight.');
+  return n;
+}
+
+export function spellNotes(sp: SpellDef): string[] {
+  const n = [`Casting costs ${sp.sanityCost} Sanity.`];
+  if (sp.attack) n.push(`Adds +${sp.attack} magical attack when you fight.`);
+  if (sp.discardOnSuccess) n.push('Returned to the deck after one successful cast.');
+  n.push('Each spell can be cast once per turn.');
+  return n;
 }
