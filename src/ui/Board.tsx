@@ -181,7 +181,7 @@ export function Board({ state, prompt, onNode }: Props) {
         {invs.filter((i) => i.silverKey).map((i) => {
           const p = nodePos(i.silverKey!);
           return (
-            <text key={`key-${i.id}`} x={p.x - 70} y={p.y - 50} fontSize={70} fill="#e5e7eb" stroke="#111" strokeWidth={5} paintOrder="stroke">
+            <text key={`key-${i.id}`} x={p.x - 95} y={p.y - 45} fontSize={110} fill="#e5e7eb" stroke="#111" strokeWidth={6} paintOrder="stroke">
               🗝<title>{`${i.name}'s Silver Key`}</title>
             </text>
           );
@@ -252,7 +252,8 @@ function Pawn({ inv, x, y, active }: { inv: Investigator; x: number; y: number; 
   const d = INVESTIGATOR_BY_ID[inv.defId];
   const initials = d.name.split(' ').map((w) => w[0]).join('');
   return (
-    <g transform={`translate(${x},${y})`} opacity={inv.stranded ? 0.45 : 1}>
+    <g transform={`translate(${x},${y})`} opacity={inv.stranded ? 0.75 : 1}>
+      {inv.stranded && <circle r={PAWN + 20} fill="rgba(127,29,29,0.35)" stroke="#f87171" strokeWidth={8} strokeDasharray="18 12" />}
       {active && <circle r={PAWN + 22} fill="none" stroke="#facc15" strokeWidth={10} className="animate-pulse" />}
       <circle r={PAWN} fill={d.pawn} stroke="#fff" strokeWidth={8} style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,.8))' }} />
       <text y={16} fontSize={42} textAnchor="middle" fill={d.pawn === '#e8c51c' ? '#000' : '#fff'} fontWeight={700}>

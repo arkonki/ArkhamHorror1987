@@ -61,7 +61,7 @@ every peer replays the same stream.
 - **Several monsters entering one space**: "nearest monster attacks highest Fight" is approximated by pairing strongest monster with highest Fight.
 - Investigator-vs-investigator attacks (remorse rule) are not modelled; remorse for stranding someone by closing a gate is.
 
-## Step 2 — playtest & UI polish (in progress)
+## Step 2 — playtest & UI polish ✅
 
 - ✅ Dice tray: every roll since the player's last decision, with animated dice, target and ✓/✗.
 - ✅ Monster movement animation: counters walk their path space by space after each Mythos move.
@@ -69,7 +69,10 @@ every peer replays the same stream.
 - ✅ Reference drawer: rules digest, Gate Appearance and location tables, Other World tables, all 49 counters, all cards.
 - ✅ Phone/tablet layout: board full width, decision panel docked at the bottom.
 - ✅ Playtest fix: Harney Jones' Shack anchor was drawn in the Other World strip.
-- ⏳ Hand playtest of auctions, Dagon charity, Other World visits and rescue in the browser.
+- ✅ Browser playthroughs: two-way trade; Dagon charity drawing an Auction (bids, paying with an item and getting
+  change, unsold lot bought at list price); Silver Key into the Dreamlands; investigator lost there, waiting, carried
+  box 2 → 1 → Arkham by a rescuer and sent to the Hospital; a full game to the Defeat / Roll of Honor screen.
+- ✅ Playtest fixes: lost investigators' pawns get a red dashed ring; larger Silver Key marker; dice tray scrollbar.
 
 ## Rule decisions taken where the text is ambiguous
 

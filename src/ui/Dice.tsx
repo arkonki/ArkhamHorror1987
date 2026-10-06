@@ -27,7 +27,7 @@ export function DiceTray({ rolls, onDismiss }: { rolls: DiceShown[]; onDismiss: 
         <span>Dice since your last choice</span>
         <button onClick={onDismiss} className="rounded px-1 text-stone-400 hover:bg-stone-800 hover:text-stone-200" aria-label="Dismiss dice">✕</button>
       </div>
-      <ul className="grid max-h-40 gap-1 overflow-y-auto pr-1">
+      <ul className="grid max-h-40 gap-1 overflow-y-auto overflow-x-hidden py-1 pr-1">
         {rolls.map((r, i) => (
           <li key={r.seq ?? i} className="flex items-center gap-2 text-sm">
             <span className="flex gap-1">{r.dice.map((d, j) => <Die key={j} value={d} size={24} delay={i * 90 + j * 40} />)}</span>
