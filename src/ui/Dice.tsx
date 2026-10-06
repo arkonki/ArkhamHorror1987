@@ -22,23 +22,37 @@ export function Die({ value, size = 28, delay = 0 }: { value: number; size?: num
 export function DiceTray({ rolls, onDismiss }: { rolls: DiceShown[]; onDismiss: () => void }) {
   if (!rolls.length) return null;
   return (
-    <div className="rounded-lg border border-stone-700 bg-stone-950/90 p-2 shadow-lg">
-      <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-widest text-stone-400">
-        <span>Dice since your last choice</span>
-        <button onClick={onDismiss} className="rounded px-1 text-stone-400 hover:bg-stone-800 hover:text-stone-200" aria-label="Dismiss dice">✕</button>
+    <section className="rounded-xl border border-stone-600 bg-stone-950 p-2.5 shadow-lg" aria-label="Dice rolls">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-stone-300">Dice rolled</h3>
+        <button onClick={onDismiss} className="rounded px-2 py-0.5 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100" aria-label="Dismiss dice">Hide ✕</button>
       </div>
-      <ul className="grid max-h-40 gap-1 overflow-y-auto overflow-x-hidden py-1 pr-1">
-        {rolls.map((r, i) => (
-          <li key={r.seq ?? i} className="flex items-center gap-2 text-sm">
-            <span className="flex gap-1">{r.dice.map((d, j) => <Die key={j} value={d} size={24} delay={i * 90 + j * 40} />)}</span>
-            {r.target !== undefined && <span className="text-xs text-stone-400">≤ {r.target}</span>}
-            <span className={`flex-1 leading-tight ${r.success === undefined ? 'text-stone-200' : r.success ? 'text-green-400' : 'text-red-400'}`}>
-              {r.label}
-              {r.success !== undefined && <b className="ml-1">{r.success ? '✓' : '✗'}</b>}
-            </span>
-          </li>
-        ))}
+      <ul className="grid max-h-60 gap-2 overflow-y-auto overflow-x-hidden pr-1">
+        {rolls.map((r, i) => {
+          const verdict = r.success === undefined ? null : r.success;
+          const sum = r.dice.reduce((a, b) => a + b, 0);
+          return (
+            <li
+              key={r.seq ?? i}
+              className={`rounded-lg border-l-4 bg-stone-900 px-3 py-2 ${verdict === null ? 'border-stone-500' : verdict ? 'border-green-500' : 'border-red-500'}`}
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex flex-wrap gap-1.5">{r.dice.map((d, j) => <Die key={j} value={d} size={40} delay={i * 90 + j * 50} />)}</span>
+                <span className="ml-auto text-right">
+                  {r.dice.length > 1 && <span className="block text-xs text-stone-400">total {sum}</span>}
+                  {r.target !== undefined && <span className="block text-xs text-stone-300">roll {r.target} or less</span>}
+                  {verdict !== null && (
+                    <span className={`mt-0.5 inline-block rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${verdict ? 'bg-green-600 text-white' : 'bg-red-700 text-white'}`}>
+                      {verdict ? 'Success' : 'Failed'}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="mt-1 text-sm leading-snug text-stone-100">{r.label}</div>
+            </li>
+          );
+        })}
       </ul>
-    </div>
+    </section>
   );
 }
