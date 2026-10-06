@@ -5,7 +5,7 @@ import { Board } from './Board';
 import { DiceTray } from './Dice';
 import { Reference } from './Reference';
 import { ZoomProvider } from './Zoom';
-import { InvestigatorPanel } from './InvestigatorPanel';
+import { InvestigatorDock, type DockMode } from './InvestigatorPanel';
 import { PromptPanel } from './PromptPanel';
 
 const LOG_COLORS = { mythos: 'text-purple-300', combat: 'text-red-300', roll: 'text-stone-400', info: 'text-amber-200', warn: 'text-orange-300' } as const;
@@ -26,8 +26,14 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
   const [seenSeq, setSeenSeq] = useState(() => state.rollSeq);
   const [showRef, setShowRef] = useState(false);
   const [showLog, setShowLog] = useState(false);
-  const [mapOnly, setMapOnly] = useState(false);
-  const [cardMin, setCardMin] = useState(false);
+  const [dock, setDock] = useState<DockMode>(() => {
+    try { const v = localStorage.getItem('arkham.dock'); return v === 'hidden' || v === 'full' ? v : 'compact'; } catch { return 'compact'; }
+  });
+  const [picked, setPicked] = useState<string | null>(null);
+  const setDockMode = (m: DockMode) => {
+    setDock(m);
+    try { localStorage.setItem('arkham.dock', m); } catch { /* private mode */ }
+  };
   const [seenLog, setSeenLog] = useState(() => state.log.length);
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -74,38 +80,29 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
               Log{chat ? ' & chat' : ''}
               {unread > 0 && !showLog && <span className="absolute -right-1.5 -top-1.5 rounded-full bg-amber-300 px-1.5 text-[10px] font-bold text-stone-900">{unread > 99 ? '99+' : unread}</span>}
             </button>
-            <button className={`${btn} hidden lg:block ${mapOnly ? 'border-amber-300 text-amber-100' : ''}`} onClick={() => setMapOnly(!mapOnly)} aria-pressed={mapOnly} title="Hide the investigator dashboard so the map gets the full width">
-              {mapOnly ? 'Show dashboard' : 'Map only'}
-            </button>
             <button className={btn} onClick={() => setShowRef(true)}>Reference</button>
             <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()}>Undo</button>
             <button className={btn} onClick={download}>Save file</button>
             <button className={btn} onClick={onQuit}>Menu</button>
           </div>
         </header>
-        <main className="relative flex flex-1 flex-col gap-2 p-2 pb-[48vh] lg:min-h-0 lg:flex-row lg:pb-2">
-          <section className="min-h-[60vh] min-w-0 lg:min-h-0 lg:flex-1">
-            <Board state={state} prompt={prompt && client.canAnswer(prompt) ? prompt : null} onNode={(n) => answer(n)} />
-          </section>
-          <aside className={`flex w-full flex-col gap-2 lg:min-h-0 ${mapOnly ? 'lg:w-0' : 'lg:w-[clamp(320px,24vw,420px)]'}`}>
-            <div className={`fixed inset-x-0 bottom-0 z-30 flex max-h-[46vh] flex-col gap-2 overflow-y-auto rounded-t-xl border-t border-amber-200/30 bg-stone-900/95 p-3 shadow-2xl backdrop-blur ${mapOnly ? 'lg:bottom-4 lg:left-auto lg:right-4 lg:w-[340px] lg:max-h-[72vh] lg:rounded-xl lg:border' : 'lg:static lg:max-h-[58%] lg:shrink-0 lg:rounded-xl lg:border lg:border-amber-200/25 lg:bg-stone-900/90 lg:p-3'}`}>
-              {mapOnly && (
-                <button className="hidden items-center gap-2 rounded border border-stone-600 px-2 py-1 text-left text-sm text-stone-300 hover:bg-stone-800 lg:flex" onClick={() => setCardMin(!cardMin)} aria-expanded={!cardMin}>
-                  <span className="font-bold text-amber-200">{cardMin ? '▸' : '▾'}</span>
-                  <span className="truncate">{cardMin ? (prompt?.title ?? 'Game over') : 'Minimise to see the map'}</span>
-                </button>
-              )}
-              <div className={`flex flex-col gap-2 ${mapOnly && cardMin ? 'lg:hidden' : ''}`}>
+        <main className="relative flex flex-1 flex-col gap-2 p-2 pb-[48vh] lg:min-h-0 lg:pb-2">
+          <div className="flex flex-1 flex-col gap-2 lg:min-h-0 lg:flex-row">
+            <section className="min-h-[60vh] min-w-0 lg:min-h-0 lg:flex-1">
+              <Board state={state} prompt={prompt && client.canAnswer(prompt) ? prompt : null} onNode={(n) => answer(n)} onPickInv={(id) => { setPicked(id); if (dock === 'hidden') setDockMode('compact'); }} />
+            </section>
+            <aside className="flex w-full flex-col lg:min-h-0 lg:w-[clamp(320px,23vw,390px)]">
+              <div className="fixed inset-x-0 bottom-0 z-30 flex max-h-[46vh] flex-col gap-2 overflow-y-auto rounded-t-xl border-t border-amber-200/30 bg-stone-900/95 p-3 shadow-2xl backdrop-blur lg:static lg:max-h-none lg:min-h-0 lg:flex-1 lg:rounded-xl lg:border lg:border-amber-200/25 lg:bg-stone-900/90">
                 <DiceTray rolls={fresh} onDismiss={() => setSeenSeq(state.rollSeq)} />
                 {!prompt ? <GameOver state={state} onQuit={onQuit} />
                   : client.canAnswer(prompt) || !waiting ? <PromptPanel state={state} prompt={prompt} onAnswer={answer} />
                   : waiting(state, prompt)}
               </div>
-            </div>
-            <div className={`overflow-y-auto pr-1 lg:min-h-0 lg:flex-1 ${mapOnly ? 'lg:hidden' : ''}`}>
-              <InvestigatorPanel state={state} />
-            </div>
-          </aside>
+            </aside>
+          </div>
+          <div className={`lg:shrink-0 ${dock === 'full' ? 'lg:h-[42vh]' : ''}`}>
+            <InvestigatorDock state={state} mode={dock} onMode={setDockMode} picked={picked} onPick={setPicked} />
+          </div>
           {/* On-demand log (and chat, when online). Kept mounted so chat scroll and drafts survive closing. */}
           <div
             className={`fixed bottom-0 right-0 top-0 z-40 flex w-[min(440px,100vw)] flex-col gap-2 border-l border-amber-200/25 bg-stone-950/97 p-3 shadow-2xl ${showLog ? '' : 'hidden'}`}

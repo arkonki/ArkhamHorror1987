@@ -91,8 +91,8 @@ export function LocationFacts({ id, extra }: { id: LocationId; extra?: ReactNode
   );
 }
 
-export function WorldFacts({ id, sp, faceUp }: { id: WorldId; sp?: number; faceUp: boolean }) {
-  const w = worldSummary(id);
+export function WorldFacts({ id, sp, faceUp, full }: { id: WorldId; sp?: number; faceUp: boolean; full?: boolean }) {
+  const w = worldSummary(id, full);
   return (
     <div>
       <div className="flex items-baseline gap-2">
@@ -137,6 +137,40 @@ export function HoverCard({ pos, children }: { pos: RefObject<{ x: number; y: nu
   return (
     <div ref={ref} className="pointer-events-none fixed left-0 top-0 z-50 w-[22rem] max-w-[92vw] rounded-lg border border-amber-200/30 bg-stone-950/95 p-3 shadow-2xl backdrop-blur" style={{ visibility: 'hidden' }}>
       {children}
+    </div>
+  );
+}
+
+/** Slim vertical doom track plus deck counts, standing at the screen's left edge. */
+export function DoomTrack({ doom, spells, items, gates }: { doom: number; spells: number; items: number; gates: number }) {
+  const cells = Array.from({ length: 13 }, (_, i) => 13 - i);
+  return (
+    <div className="flex w-11 shrink-0 flex-col items-center gap-1 rounded-lg bg-stone-950/80 py-1.5" aria-label={`Doom track: ${doom} of 13`}>
+      <div className="text-[9px] font-bold uppercase leading-none tracking-wider text-red-300">Doom</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-px">
+        {cells.map((n) => {
+          const here = n === doom;
+          const filled = n < doom;
+          const hot = n >= 10;
+          return (
+            <div
+              key={n}
+              title={n === 13 ? 'Doom 13: the Ancient One awakens' : `Doom ${n}`}
+              className={`flex w-8 flex-1 items-center justify-center rounded-sm text-[11px] font-bold leading-none ${
+                here ? 'bg-red-600 text-white ring-2 ring-red-200' : filled ? 'bg-red-950 text-red-400' : hot ? 'bg-stone-800 text-red-300' : 'bg-stone-800 text-stone-400'
+              }`}
+              style={{ minHeight: 14 }}
+            >
+              {n}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1 grid gap-1 text-center text-[10px] leading-tight text-stone-300">
+        <span title="Spell cards left in the deck"><b className="block text-sm text-purple-200">{spells}</b>spells</span>
+        <span title="Item cards left in the deck"><b className="block text-sm text-amber-200">{items}</b>items</span>
+        <span title="Gate cards left in the deck"><b className="block text-sm text-blue-200">{gates}</b>gates</span>
+      </div>
     </div>
   );
 }

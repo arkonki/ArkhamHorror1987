@@ -7,15 +7,16 @@ import { WORLDS } from '../engine/data/otherWorlds';
 import { NEIGHBORS, nodeLabel, nodeLoc, nodePos } from '../engine/board';
 import type { GameState, Investigator, MonsterInst, Prompt } from '../engine';
 import { boardUrl, monsterUrl } from './assets';
-import { DECKS, doomSpace, worldBox } from './layout';
 import { useZoom } from './Zoom';
-import { HoverCard, LocationFacts, MonsterFacts, WorldFacts } from './Info';
+import { DoomTrack, HoverCard, LocationFacts, MonsterFacts, WorldFacts } from './Info';
 import { monsterText } from './describe';
 
 interface Props {
   state: GameState;
   prompt: Prompt | null;
   onNode: (node: string) => void;
+  /** Click on an investigator who is away in an Other World (selects them in the dashboard). */
+  onPickInv?: (id: string) => void;
 }
 
 const COUNTER = 150;
@@ -60,14 +61,15 @@ type Tip =
   | { kind: 'inv'; id: string };
 
 const ZOOMS = [1, 1.35, 1.8, 2.6];
-const ASPECT = BOARD_W / BOARD_H;
+/** Only the street map is shown; the scan's doom track, decks and Other World strip are rebuilt as UI. */
+const CROP = { x: 590, y: 480, w: 2790, h: 1985 };
+const ASPECT = CROP.w / CROP.h;
 
 function invPoint(inv: Investigator) {
-  if (inv.place.t === 'arkham') return nodePos(inv.place.node);
-  return worldBox(inv.place.world, inv.place.box as 1 | 2);
+  return inv.place.t === 'arkham' ? nodePos(inv.place.node) : null;
 }
 
-export function Board({ state, prompt, onNode }: Props) {
+export function Board({ state, prompt, onNode, onPickInv }: Props) {
   const [zoom, setZoom] = useState(1);
   const openZoom = useZoom();
   const [hover, setHover] = useState<string | null>(null);
@@ -100,10 +102,11 @@ export function Board({ state, prompt, onNode }: Props) {
   const centerOn = (p: { x: number; y: number }, smooth = true) => {
     const el = box.current;
     if (!el || !svgW) return;
-    el.scrollTo({ left: (p.x / BOARD_W) * svgW - el.clientWidth / 2, top: (p.y / BOARD_H) * (svgW / ASPECT) - el.clientHeight / 2, behavior: smooth ? 'smooth' : 'auto' });
+    el.scrollTo({ left: ((p.x - CROP.x) / CROP.w) * svgW - el.clientWidth / 2, top: ((p.y - CROP.y) / CROP.h) * (svgW / ASPECT) - el.clientHeight / 2, behavior: smooth ? 'smooth' : 'auto' });
   };
   const activeInv = state.active ? state.investigators[state.active] : null;
   const activePoint = activeInv && !activeInv.out ? invPoint(activeInv) : null;
+  const away = Object.values(state.investigators).filter((i) => !i.out && i.place.t === 'world');
   const activeKey = activeInv ? `${activeInv.id}:${activeInv.place.t === 'arkham' ? activeInv.place.node : activeInv.place.world}` : '';
   // Follow the active investigator whenever the board is zoomed in.
   useEffect(() => {
@@ -137,17 +140,15 @@ export function Board({ state, prompt, onNode }: Props) {
 
   const invs = Object.values(state.investigators).filter((i) => !i.out);
   const invByNode: Record<string, Investigator[]> = {};
-  const invByBox: Record<string, Investigator[]> = {};
   for (const i of invs) {
     if (i.place.t === 'arkham') (invByNode[i.place.node] ??= []).push(i);
-    else (invByBox[`${i.place.world}:${i.place.box}`] ??= []).push(i);
   }
   const gates = Object.values(state.gates).filter((g) => g.location);
-  const doom = doomSpace(state.doom);
 
   return (
-    <div className="relative w-full min-w-0 lg:h-full">
-      <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-lg bg-stone-950/80 p-1 shadow-lg backdrop-blur">
+    <div className="relative flex w-full min-w-0 gap-1.5 lg:h-full">
+      <DoomTrack doom={state.doom} spells={state.spellDeck.length} items={state.itemDeck.length} gates={state.gateDeck.length} />
+      <div className="absolute left-14 top-3 z-10 flex items-center gap-1 rounded-lg bg-stone-950/80 p-1 shadow-lg backdrop-blur">
         {ZOOMS.map((z) => (
           <button key={z} onClick={() => setZoom(z)} className={`rounded px-2.5 py-1 text-sm ${zoom === z ? 'bg-amber-200 font-bold text-stone-900' : 'text-stone-200 hover:bg-stone-800'}`}>
             {z === 1 ? 'Fit' : `${z}×`}
@@ -166,10 +167,10 @@ export function Board({ state, prompt, onNode }: Props) {
         ref={box}
         onMouseDown={onDown}
         onClickCapture={(e) => { if (drag.current?.moved) e.stopPropagation(); }}
-        className="h-full w-full overflow-auto rounded-lg bg-black/40"
+        className="h-full min-w-0 flex-1 overflow-auto rounded-lg bg-black/40"
         style={{ scrollbarWidth: 'thin', cursor: zoom > 1 ? 'grab' : 'default' }}
       >
-      <svg viewBox={`0 0 ${BOARD_W} ${BOARD_H}`} style={{ width: svgW ? `${svgW}px` : '100%', display: 'block', maxWidth: 'none' }} role="img" aria-label="Arkham game board">
+      <svg viewBox={`${CROP.x} ${CROP.y} ${CROP.w} ${CROP.h}`} style={{ width: svgW ? `${svgW}px` : '100%', display: 'block', maxWidth: 'none', marginInline: 'auto' }} role="img" aria-label="Arkham game board">
         <image href={boardUrl} width={BOARD_W} height={BOARD_H} />
 
         {/* Clickable street spaces and locations */}
@@ -273,28 +274,24 @@ export function Board({ state, prompt, onNode }: Props) {
           );
         })}
 
-        {/* Investigators in Other Worlds */}
-        {Object.entries(invByBox).map(([key, list]) => {
-          const [world, box] = key.split(':');
-          const p = worldBox(world as never, Number(box) as 1 | 2);
-          return list.map((inv, i) => <Pawn key={inv.id} hover={tipProps({ kind: 'inv', id: inv.id })} inv={inv} x={p.x + (i % 2) * 50 - 25} y={p.y + Math.floor(i / 2) * 50} active={state.active === inv.id} />);
-        })}
-
-        {/* Doom factor */}
-        <g transform={`translate(${doom.x},${doom.y})`}>
-          <circle r={70} fill="rgba(127,29,29,0.85)" stroke="#fca5a5" strokeWidth={8} />
-          <text y={22} fontSize={64} textAnchor="middle" fill="#fff" fontWeight={700}>
-            {state.doom}
-          </text>
-          <title>Doom Factor</title>
-        </g>
-
-        {/* Deck counts */}
-        <DeckCount x={DECKS.spells.x} y={DECKS.spells.y} n={state.spellDeck.length} />
-        <DeckCount x={DECKS.items.x} y={DECKS.items.y} n={state.itemDeck.length} />
-        <DeckCount x={DECKS.gates.x} y={DECKS.gates.y} n={state.gateDeck.length} />
       </svg>
       </div>
+      {away.length > 0 && (
+        <div className="absolute right-3 top-3 z-10 grid gap-1 rounded-lg bg-purple-950/85 p-2 text-sm shadow-lg backdrop-blur">
+          <div className="text-[11px] font-bold uppercase tracking-widest text-purple-200">Beyond the gates</div>
+          {away.map((i) => {
+            const w = i.place.t === 'world' ? WORLDS[i.place.world] : null;
+            return (
+              <button key={i.id} onClick={() => onPickInv?.(i.id)} className="flex items-center gap-2 rounded px-1 text-left text-stone-100 hover:bg-purple-900">
+                <span className="h-3 w-3 rounded-full border border-white" style={{ background: INVESTIGATOR_BY_ID[i.defId].pawn }} />
+                <span className="font-bold">{i.name.split(' ')[0]}</span>
+                <span style={{ color: w?.color }}>{w?.name}{i.place.t === 'world' ? ` · box ${i.place.box}` : ''}</span>
+                {i.stranded && <span className="text-red-300">(lost)</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {tip && (
         <HoverCard pos={mouse}>
           <TipBody tip={tip} state={state} />
@@ -386,17 +383,6 @@ function MonsterToken({ m, x, y, rot, path, moveSeq, onClick, hover }: { m: Mons
   return (
     <g ref={ref} transform={`translate(${x},${y}) rotate(${rot})`} style={{ cursor: 'pointer' }} onClick={onClick} {...hover}>
       <image href={monsterUrl(d.art)} x={-COUNTER / 2} y={-COUNTER / 2} width={COUNTER} height={COUNTER} style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,.7))' }} />
-    </g>
-  );
-}
-
-function DeckCount({ x, y, n }: { x: number; y: number; n: number }) {
-  return (
-    <g transform={`translate(${x + 120},${y + 180})`}>
-      <circle r={48} fill="#1c1917" stroke="#fde68a" strokeWidth={5} />
-      <text y={18} fontSize={50} textAnchor="middle" fill="#fde68a">
-        {n}
-      </text>
     </g>
   );
 }

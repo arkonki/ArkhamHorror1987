@@ -89,8 +89,8 @@ function gist(text: string, max = 118): string {
   return t.length <= max ? t : `${t.slice(0, max).replace(/\s+\S*$/, '')}…`;
 }
 
-export function tableLines(table: TableEntry[]): TableLine[] {
-  return table.map((e) => ({ roll: rollLabel(e.roll), text: gist(e.text), outcome: outcomeOf(e), danger: has(e.fx, 'monster', 'gateAndMonster') }));
+export function tableLines(table: TableEntry[], full = false): TableLine[] {
+  return table.map((e) => ({ roll: rollLabel(e.roll), text: full ? e.text : gist(e.text), outcome: outcomeOf(e), danger: has(e.fx, 'monster', 'gateAndMonster') }));
 }
 
 /** Sixths of the table that are dangerous / rewarding. */
@@ -125,7 +125,7 @@ export function locationSummary(id: LocationId): LocationSummary {
   };
 }
 
-export function worldSummary(id: WorldId) {
+export function worldSummary(id: WorldId, full = false) {
   const w = WORLDS[id];
-  return { name: w.name, color: w.color, lines: tableLines(w.table), odds: oddsOf(w.table) };
+  return { name: w.name, color: w.color, lines: tableLines(w.table, full), odds: oddsOf(w.table) };
 }
