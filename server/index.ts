@@ -1,6 +1,6 @@
 /**
  * Arkham Horror online server: WebSocket rooms at /ws and the built app (dist/) over HTTP.
- *   PORT (default 3001), DATA_DIR (default ./data/rooms), STATIC_DIR (default ./dist)
+ *   PORT (default 3001), HOST (default: all interfaces), DATA_DIR (default ./data/rooms), STATIC_DIR (default ./dist)
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -14,7 +14,7 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 };
 
-export function startServer(opts: { port: number; dataDir: string | null; staticDir: string | null }): Promise<{ server: Server; rooms: RoomManager; port: number }> {
+export function startServer(opts: { port: number; host?: string; dataDir: string | null; staticDir: string | null }): Promise<{ server: Server; rooms: RoomManager; port: number }> {
   const rooms = new RoomManager(opts.dataDir);
   const root = opts.staticDir ? resolve(opts.staticDir) : null;
 
@@ -73,7 +73,7 @@ export function startServer(opts: { port: number; dataDir: string | null; static
     });
   });
 
-  return new Promise((ok) => server.listen(opts.port, () => {
+  return new Promise((ok) => server.listen(opts.port, opts.host, () => {
     const addr = server.address();
     ok({ server, rooms, port: typeof addr === 'object' && addr ? addr.port : opts.port });
   }));
@@ -82,6 +82,6 @@ export function startServer(opts: { port: number; dataDir: string | null; static
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
 if (isMain) {
   const port = Number(process.env.PORT ?? 3001);
-  startServer({ port, dataDir: process.env.DATA_DIR || 'data/rooms', staticDir: process.env.STATIC_DIR || 'dist' })
-    .then(({ port: p }) => console.log(`Arkham Horror server on http://localhost:${p} (WebSocket /ws)`));
+  startServer({ port, host: process.env.HOST || undefined, dataDir: process.env.DATA_DIR || 'data/rooms', staticDir: process.env.STATIC_DIR || 'dist' })
+    .then(({ port: p }) => console.log(`Arkham Horror server on http://${process.env.HOST || 'localhost'}:${p} (WebSocket /ws)`));
 }

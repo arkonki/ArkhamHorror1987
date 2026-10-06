@@ -177,7 +177,7 @@ One Node process serves both the built app and the online rooms on a single port
 ```bash
 npm ci
 npm run build
-npm start            # PORT (default 3001), DATA_DIR (default data/rooms)
+npm start            # PORT (default 3001), HOST (default all), DATA_DIR (default data/rooms)
 ```
 
 Or with Docker — mount a volume at `/data` so games persist:
@@ -190,6 +190,18 @@ docker run -p 8080:8080 -v arkham-data:/data arkham
 Any host that runs a Node container with WebSockets will do (Fly.io, Render, Railway, a VPS). Put it
 behind HTTPS; the app switches to `wss://` automatically. To host the app separately from the server
 (for example on static hosting), build it with `VITE_SERVER_URL=wss://your-server/ws`.
+
+Behind Apache (shared hosting), serve `dist/` as the document root and proxy only the WebSocket to a
+privately bound server (`HOST=10.x.x.x PORT=3007 npm start`), e.g. in `.htaccess`:
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP:Upgrade} =websocket [NC]
+RewriteRule ^ws$ ws://10.x.x.x:3007/ws [P,L,NE]
+RewriteRule ^assets/ - [END]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.html [END]
+```
 
 ## Project layout
 
