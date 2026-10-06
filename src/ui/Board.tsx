@@ -4,7 +4,7 @@ import { INVESTIGATOR_BY_ID } from '../engine/data/investigators';
 import { LOCATIONS } from '../engine/data/locations';
 import { MONSTER_BY_ID } from '../engine/data/monsters';
 import { WORLDS } from '../engine/data/otherWorlds';
-import { nodeLoc, nodePos } from '../engine/board';
+import { NEIGHBORS, nodeLoc, nodePos } from '../engine/board';
 import type { GameState, Investigator, MonsterInst, Prompt } from '../engine';
 import { boardUrl, monsterUrl } from './assets';
 import { DECKS, doomSpace, worldBox } from './layout';
@@ -34,9 +34,23 @@ function monsterTitle(m: MonsterInst) {
 }
 
 function heading(m: MonsterInst): number {
-  if (!m.node || !m.prev) return 0;
-  const a = nodePos(m.prev), b = nodePos(m.node);
+  if (!m.node) return 0;
+  let a, b;
+  if (m.exit) {
+    // Arrow points along the street the monster will take next.
+    const from = nodeLoc(m.node) ? (entranceToward(m.exit, m.node) ?? m.node) : m.node;
+    a = nodePos(from);
+    b = nodePos(m.exit);
+  } else if (m.prev) {
+    a = nodePos(m.prev);
+    b = nodePos(m.node);
+  } else return 0;
   return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI + 90;
+}
+
+/** The entrance of a location next to the street node `exit`. */
+function entranceToward(exit: string, locNodeId: string): string | undefined {
+  return NEIGHBORS[locNodeId]?.find((e) => NEIGHBORS[e]?.includes(exit));
 }
 
 export function Board({ state, prompt, onNode }: Props) {
@@ -155,6 +169,16 @@ export function Board({ state, prompt, onNode }: Props) {
           });
         })}
 
+        {/* Silver Key markers */}
+        {invs.filter((i) => i.silverKey).map((i) => {
+          const p = nodePos(i.silverKey!);
+          return (
+            <text key={`key-${i.id}`} x={p.x - 70} y={p.y - 50} fontSize={70} fill="#e5e7eb" stroke="#111" strokeWidth={5} paintOrder="stroke">
+              🗝<title>{`${i.name}'s Silver Key`}</title>
+            </text>
+          );
+        })}
+
         {/* Investigators in Other Worlds */}
         {Object.entries(invByBox).map(([key, list]) => {
           const [world, box] = key.split(':');
@@ -195,13 +219,13 @@ function Pawn({ inv, x, y, active }: { inv: Investigator; x: number; y: number; 
   const d = INVESTIGATOR_BY_ID[inv.defId];
   const initials = d.name.split(' ').map((w) => w[0]).join('');
   return (
-    <g transform={`translate(${x},${y})`}>
+    <g transform={`translate(${x},${y})`} opacity={inv.stranded ? 0.45 : 1}>
       {active && <circle r={PAWN + 22} fill="none" stroke="#facc15" strokeWidth={10} className="animate-pulse" />}
       <circle r={PAWN} fill={d.pawn} stroke="#fff" strokeWidth={8} style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,.8))' }} />
       <text y={16} fontSize={42} textAnchor="middle" fill={d.pawn === '#e8c51c' ? '#000' : '#fff'} fontWeight={700}>
         {initials}
       </text>
-      <title>{d.name}</title>
+      <title>{`${d.name}${inv.stranded ? ' (lost — awaiting rescue)' : ''}`}</title>
     </g>
   );
 }

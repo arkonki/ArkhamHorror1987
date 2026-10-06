@@ -5,7 +5,7 @@ import { LOCATIONS } from '../data/locations';
 import { MONSTERS } from '../data/monsters';
 import { ITEMS, SPELLS } from '../data/cards';
 import { WORLDS } from '../data/otherWorlds';
-import { Game, type Flow } from '../game';
+import { Game, Interrupt, type Flow } from '../game';
 import { DEFAULT_OPTIONS } from '../state';
 import type { Answer, Prompt, Setup } from '../types';
 
@@ -290,5 +290,198 @@ describe('investigators', () => {
     g.moveMonsters();
     const before = distances('s8')['s0'];
     expect(distances(byakhee.node!)['s0']).toBe(Math.max(0, before - 5));
+  });
+});
+
+/** Drive a flow that may end with an Interrupt; answers by prompt title/kind. */
+function play<T>(flow: Flow<T>, answer: (p: Prompt) => Answer) {
+  try {
+    return drive(flow, answer);
+  } catch (e) {
+    if (e instanceof Interrupt) return undefined;
+    throw e;
+  }
+}
+
+describe('monster arrows', () => {
+  it('asks a player to point a new monster and then follows that street', () => {
+    for (const [exit, end] of [['s4', 's3'], ['s0', 's9']] as const) {
+      const g = game([3]);
+      for (const i of Object.values(g.state.investigators)) i.place = { t: 'arkham', node: 'loc:hospital' };
+      g.state.cup = g.state.cup.filter((u) => g.def(g.state.monsters[u]).species === 'Maniac' && g.def(g.state.monsters[u]).hand === 'L');
+      const seen: Prompt[] = [];
+      const m = drive(g.appear('loc:train_station', null), (p) => {
+        seen.push(p);
+        return exit;
+      })!;
+      expect(seen[0].kind).toBe('orient');
+      expect(seen[0].nodes?.sort()).toEqual(['s0', 's4']);
+      g.moveMonsters();
+      expect(m.node, `heading ${exit}`).toBe(end);
+    }
+  });
+});
+
+describe('Bind Monster', () => {
+  it('binds a monster that then fights for you and is set free nearby', () => {
+    const g = game([1]);
+    const inv = g.inv(g.state.order[0]);
+    inv.place = { t: 'arkham', node: 's1' };
+    inv.spells = [{ uid: 'b', id: 'bind_monster' }];
+    const ghoul = put(g, 'Ghoul', 's1');
+    drive(g.useUtility(inv, 'u:bind'), (p) => (p.options.some((o) => o.key === 'bind') ? 'bind' : p.options[0].key));
+    expect(inv.bound).toBe(ghoul.uid);
+    expect(ghoul.node).toBeNull();
+    expect(inv.spells).toHaveLength(0);
+
+    const maniac = put(g, 'Maniac', 's1');
+    const r = drive(g.attack(inv, { monster: maniac }), (p) => (p.multi ? ['bound'] : p.kind === 'destination' ? 's4' : p.options[0].key));
+    expect(r.win).toBe(true);
+    expect(inv.bound).toBeNull();
+    expect(ghoul.node).toBe('s4');
+  });
+
+  it('a bound monster used against a gate goes into the trophy pile', () => {
+    const g = game([6]);
+    const inv = g.inv(g.state.order[0]);
+    const zombie = Object.values(g.state.monsters).find((m) => g.def(m).species === 'Zombie')!;
+    g.state.cup = g.state.cup.filter((u) => u !== zombie.uid);
+    inv.bound = zombie.uid;
+    const gate = Object.values(g.state.gates)[0];
+    gate.location = 'woods';
+    const r = drive(g.attack(inv, { gate }), (p) => (p.multi ? ['bound'] : p.options[0].key));
+    expect(r.win).toBe(true);
+    expect(inv.trophies.monsters).toContain(zombie.uid);
+  });
+
+  it('a bound monster is physical, except against its own species', () => {
+    const g = game([1]);
+    const inv = g.inv(g.state.order[0]);
+    const ghostA = Object.values(g.state.monsters).find((m) => g.def(m).species === 'Ghost')!;
+    g.state.cup = g.state.cup.filter((u) => u !== ghostA.uid);
+    inv.bound = ghostA.uid;
+    const ghostB = put(g, 'Ghost', 's1');
+    const spectre = put(g, 'Formless Spawn', 's1');
+    drive(g.attack(inv, { monster: spectre }), (p) => (p.multi ? ['bound'] : p.options[0].key));
+    expect(g.state.lastRoll?.label).toContain('total 1'); // only magic harms it: bound ghost is physical
+    expect(inv.bound).toBe(ghostA.uid);
+    drive(g.attack(inv, { monster: ghostB }), (p) => (p.multi ? ['bound'] : p.kind === 'destination' ? p.options[0].key : p.options[0].key));
+    expect(g.state.lastRoll?.label).toContain('total 7'); // ghost vs ghost is magical: 6 + D6(1)
+  });
+});
+
+describe('Silver Key', () => {
+  it('passes to the Dreamlands and back to the marked space', () => {
+    const g = game([2]);
+    const inv = g.inv(g.state.order[0]);
+    inv.place = { t: 'arkham', node: 's22' };
+    inv.items = [{ uid: 'k', id: 'silver_key' }];
+    play(g.useUtility(inv, 'u:key'), (p) => p.options[0].key);
+    expect(inv.place).toMatchObject({ t: 'world', world: 'earths_dreamlands', keyReturn: 's22' });
+    expect(inv.silverKey).toBe('s22');
+    expect(g.utilityOptions(inv).map((o) => o.key)).toContain('u:keyBack');
+    play(g.useUtility(inv, 'u:keyBack'), (p) => p.options[0].key);
+    expect(inv.place).toEqual({ t: 'arkham', node: 's22' });
+  });
+
+  it('finishing the Dreamlands visit also returns to the key marker', () => {
+    const g = game([2]);
+    const inv = g.inv(g.state.order[0]);
+    inv.place = { t: 'world', world: 'earths_dreamlands', box: 1, gate: null, keyReturn: 's30' };
+    drive(g.returnToArkham(inv));
+    expect(inv.place).toEqual({ t: 'arkham', node: 's30' });
+  });
+});
+
+describe('auctions', () => {
+  it('accepts items at their cash value and gives change', () => {
+    const g = game([3]);
+    const [a, b] = g.state.order.map((id) => g.inv(id));
+    a.money = 0;
+    a.items = [];
+    b.money = 1;
+    b.items = [{ uid: 'sg', id: 'shotgun' }];
+    g.state.itemDeck = ['knife', 'cavalry_saber', 'rifle'];
+    drive(g.auction(a), (p) => {
+      if (p.kind === 'bid') return p.title.includes('Knife') ? '2' : '3';
+      if (p.title.startsWith('Pay $3')) return 'cash';
+      return p.options.find((o) => o.ref === 'shotgun')?.key ?? p.options[0].key;
+    });
+    expect(b.items.map((c) => c.id).sort()).toEqual(['cavalry_saber', 'knife']);
+    expect(b.money).toBe(1 + 5 - 3); // shotgun ($7) for a $2 knife: $5 change; saber paid in cash
+    expect(a.money).toBe(1 + 1); // half of each sale
+  });
+});
+
+describe('trading', () => {
+  it('swaps cards and money both ways when accepted', () => {
+    const g = game([3]);
+    const [a, b] = g.state.order.map((id) => g.inv(id));
+    a.place = b.place = { t: 'arkham', node: 's1' };
+    a.items = [{ uid: 'kn', id: 'knife' }];
+    a.spells = [];
+    b.items = [];
+    b.spells = [{ uid: 'hl', id: 'heal' }];
+    a.money = 5;
+    b.money = 0;
+    drive(g.trade(a), (p) => {
+      if (p.multi) return p.inv === a.id ? ['i:kn'] : ['s:hl'];
+      if (p.title.includes('add money')) return p.options.find((o) => o.key === '2')?.key ?? '0';
+      return p.options[0].key; // accept
+    });
+    expect(a.items).toHaveLength(0);
+    expect(a.spells.map((c) => c.id)).toEqual(['heal']);
+    expect(b.items.map((c) => c.id)).toEqual(['knife']);
+    expect([a.money, b.money]).toEqual([3, 2]);
+  });
+});
+
+describe('OPTION: rescue', () => {
+  function lostSetup() {
+    const g = game([1]);
+    g.state.setup.options.rescueLost = true;
+    const [lost, hero] = g.state.order.map((id) => g.inv(id));
+    lost.place = { t: 'world', world: 'abyss', box: 2, gate: 'x' };
+    const gate = Object.values(g.state.gates).find((x) => x.world === 'abyss')!;
+    gate.location = 'woods';
+    lost.str = 1;
+    play(g.lose(lost, 'str', 3), (p) => (p.options.some((o) => o.key === 'wait') ? 'wait' : p.options[0].key));
+    return { g, lost, hero };
+  }
+
+  it('a lost investigator stays where they fell and can be carried home', () => {
+    const { g, lost, hero } = lostSetup();
+    expect(lost.stranded).toBe(true);
+    expect(lost.out).toBeFalsy();
+    hero.place = { t: 'world', world: 'abyss', box: 2, gate: Object.values(g.state.gates).find((x) => x.location === 'woods')!.uid };
+    play(g.otherWorldTurn(hero), (p) => p.options[0].key); // carry along (Strength roll succeeds)
+    expect(lost.place).toMatchObject({ box: 1 });
+    play(g.otherWorldTurn(hero), (p) => p.options[0].key);
+    expect(lost.stranded).toBe(false);
+    expect(lost.place).toEqual({ t: 'arkham', node: 'loc:hospital' }); // arrived with 0 Strength
+    expect(hero.place).toEqual({ t: 'arkham', node: 'loc:woods' });
+  });
+
+  it('healing a lost investigator back to health rescues them', () => {
+    const { g, lost, hero } = lostSetup();
+    hero.place = { t: 'world', world: 'abyss', box: 2, gate: null };
+    hero.spells = [{ uid: 'h', id: 'heal' }];
+    drive(g.useUtility(hero, 'u:heal'), (p) => (p.options.find((o) => o.key === lost.id)?.key ?? p.options[0].key));
+    expect(lost.str).toBe(2);
+    expect(lost.stranded).toBe(false);
+  });
+});
+
+describe('OPTION: carrying limit', () => {
+  it('cannot pick up more items than Strength without dropping one', () => {
+    const g = game([3]);
+    g.state.setup.options.carryLimit = true;
+    const inv = g.inv(g.state.order[0]);
+    inv.str = 2;
+    inv.items = [{ uid: 'a', id: 'knife' }, { uid: 'b', id: 'cavalry_saber' }];
+    drive(g.receiveItem(inv, 'rifle'), () => 'leave');
+    expect(inv.items.map((c) => c.id)).toEqual(['knife', 'cavalry_saber']);
+    drive(g.receiveItem(inv, 'rifle'), () => 'a');
+    expect(inv.items.map((c) => c.id)).toEqual(['cavalry_saber', 'rifle']);
   });
 });

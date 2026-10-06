@@ -9,6 +9,9 @@ export const DEFAULT_OPTIONS: Options = {
   fastTalkPenalty: false,
   teamFightBonus: false,
   honorByGateSp: false,
+  orientMonsters: true,
+  rescueLost: false,
+  carryLimit: false,
 };
 
 export const START_NODE = 'loc:train_station';
@@ -39,6 +42,8 @@ export function newInvestigator(state: GameState, defId: string, player: number,
     lostTurns: 0,
     jailTurns: 0,
     foundGate: null,
+    bound: null,
+    silverKey: null,
     trophies: { monsters: [], gates: [] },
     usedSpells: [],
     turn: {},
@@ -80,7 +85,7 @@ export function createState(setup: Setup, rng: Rng): GameState {
 
   for (const def of MONSTERS) {
     const uid = `mon${state.uidCounter++}`;
-    state.monsters[uid] = { uid, def: def.id, node: null, prev: null, vampireBonus: 0 };
+    state.monsters[uid] = { uid, def: def.id, node: null, prev: null, exit: null, vampireBonus: 0 };
     state.cup.push(uid);
   }
   rng.shuffle(state.cup);
@@ -104,7 +109,8 @@ export function createState(setup: Setup, rng: Rng): GameState {
 
 /** Number of gates that loses the game when present for a full game turn. */
 export function gateLimit(state: GameState): number {
-  const n = Object.values(state.investigators).filter((i) => !i.out).length;
+  // Stranded investigators count while their player waits for a rescue (no replacement in play).
+  const n = Object.values(state.investigators).filter((i) => !i.out && (!i.stranded || i.waiting)).length;
   if (n <= 3) return 8;
   if (n === 4) return 7;
   return 6;

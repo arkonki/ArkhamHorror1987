@@ -10,7 +10,15 @@ export function makeSetup(seed: number, n = 3, gateTable: 'rules' | 'board' = 'r
     seed,
     players: [{ name: 'A' }, { name: 'B' }],
     investigators: ids.slice(0, n).map((defId, i) => ({ defId, player: i % 2, str: 3 + ((seed + i) % 5) })),
-    options: { ...DEFAULT_OPTIONS, gateTable },
+    options: {
+      ...DEFAULT_OPTIONS,
+      gateTable,
+      orientMonsters: seed % 3 !== 0,
+      rescueLost: seed % 4 === 1,
+      carryLimit: seed % 5 === 2,
+      fastTalkPenalty: seed % 2 === 0,
+      teamFightBonus: seed % 3 === 1,
+    },
   };
 }
 
@@ -27,7 +35,7 @@ export function randomAnswer(p: Prompt, rng: Rng): Answer {
 }
 
 describe('random play', () => {
-  for (let seed = 1; seed <= 60; seed++) {
+  for (let seed = 1; seed <= 150; seed++) {
     it(`seed ${seed} plays to completion and replays identically`, () => {
       const setup = makeSetup(seed, 1 + (seed % 5), seed % 2 ? 'rules' : 'board');
       const s = new Session(setup);

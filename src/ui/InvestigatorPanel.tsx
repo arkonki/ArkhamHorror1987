@@ -16,6 +16,7 @@ function skill(inv: Investigator, s: 'fastTalk' | 'fight' | 'knowledge' | 'sneak
 
 function where(state: GameState, inv: Investigator) {
   if (inv.out) return 'Lost';
+  if (inv.stranded && inv.place.t === 'world') return `Lost in ${WORLDS[inv.place.world].name}, box ${inv.place.box} — awaiting rescue`;
   if (inv.place.t === 'world') return `${WORLDS[inv.place.world].name}, box ${inv.place.box}`;
   const label = nodeLabel(inv.place.node, (l) => LOCATIONS[l].name);
   if (inv.jailTurns) return `${label} (in jail)`;
@@ -79,6 +80,9 @@ export function InvestigatorPanel({ state }: { state: GameState }) {
                   {inv.skillCards.map((id, i) => <Tag key={i} text={SKILL_CARDS.find((c) => c.id === id)!.name} cls="bg-orange-800" />)}
                   {inv.lostTurns > 0 && <Tag text={`Loses ${inv.lostTurns} turn`} cls="bg-red-900" />}
                   {inv.foundGate && <Tag text="Knows both sides of a gate" cls="bg-purple-900" />}
+                  {inv.bound && <Tag text={`Bound ${MONSTER_BY_ID[state.monsters[inv.bound].def].species}`} cls="bg-fuchsia-900" />}
+                  {inv.silverKey && <Tag text={`Silver Key marks ${nodeLabel(inv.silverKey, (l) => LOCATIONS[l].name)}`} cls="bg-slate-700" />}
+                  {inv.stranded && <Tag text="Lost — awaiting rescue" cls="bg-red-950" />}
                 </div>
                 <CardRow title="Items" ids={inv.items.map((c) => c.id)} name={(id) => ITEM_BY_ID[id].name} />
                 <CardRow title="Spells" ids={inv.spells.map((c) => c.id)} name={(id) => SPELL_BY_ID[id].name} dim={inv.spells.map((c) => inv.usedSpells.includes(c.uid))} />

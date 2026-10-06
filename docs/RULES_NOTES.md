@@ -57,8 +57,11 @@ Mythos Phase:
   at the gate of departure. Follow the order of play normally while there.
 - 0 Sanity or 0 Strength in an Other World → investigator lost: return/reshuffle cards, trophies to monster pile;
   start another investigator.
-  OPTION: lost investigator rescued if another investigator lands on same box (shift box-to-box with successful
-  Strength roll per move, or give SAN/STR by spell/magic item).
+  OPTION: an investigator lost in an Other World can be rescued if another investigator lands on the same box.
+  Two ways: the lost investigator can be shifted from box to box and back to Arkham with a successful strength roll
+  by the rescuer for each move; or the rescuer can give the lost investigator sanity or strength points by a spell or
+  magical item. The lost investigator's player must do nothing during the turns needed, or the players agree that
+  one player can have more than one investigator in play.
 - Returning: begin movement in matching Arkham gate location (choose if two gates to same world). If a monster
   guards the gate, may move away without sanity roll. To attack the gate, wait for attack step, taking sanity
   loss for guardian. If gate destroyed, guardians are sucked away and added to investigator's trophies.

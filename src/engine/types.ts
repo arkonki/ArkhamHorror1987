@@ -6,7 +6,7 @@ export type InvId = string;
 /** Where a piece is. Street spaces and locations are Arkham "nodes" (`s12`, `loc:woods`). */
 export type Place =
   | { t: 'arkham'; node: string }
-  | { t: 'world'; world: WorldId; box: 1 | 2; gate: string | null; returnTo?: LocationId };
+  | { t: 'world'; world: WorldId; box: 1 | 2; gate: string | null; returnTo?: LocationId; keyReturn?: string };
 
 export interface Card {
   uid: string;
@@ -45,6 +45,14 @@ export interface Investigator {
   sanityRolled: string[];
   tempSneak: number;
   nextMove: 'd6' | number | null;
+  /** Bound monster (Bind Monster spell) travelling with the investigator. */
+  bound: string | null;
+  /** Silver Key marker: the Arkham node the key returns to from the Dreamlands. */
+  silverKey: string | null;
+  /** OPTION rescue: lost in an Other World, waiting where they fell. */
+  stranded?: boolean;
+  /** The stranded investigator's player chose to wait instead of starting a new investigator. */
+  waiting?: boolean;
   /** Lost/killed: a replacement investigator joins next turn. */
   out?: boolean;
   /** The game turn from which this investigator acts (replacements start next turn). */
@@ -58,6 +66,8 @@ export interface MonsterInst {
   node: string | null;
   /** Previous node — defines heading for handed monsters. */
   prev: string | null;
+  /** The street node the arrow points at (set when the monster is oriented on appearance or release). */
+  exit: string | null;
   vampireBonus: number;
 }
 
@@ -77,6 +87,12 @@ export interface Options {
   teamFightBonus: boolean;
   /** OPTION: use accumulated gate SP to decide First Citizen. */
   honorByGateSp: boolean;
+  /** Players point each new monster's arrow (as on the table) instead of a random heading. */
+  orientMonsters: boolean;
+  /** OPTION: an investigator lost in an Other World can be rescued by another landing on the same box. */
+  rescueLost: boolean;
+  /** OPTION: Strength limits the number of items an investigator can pick up. */
+  carryLimit: boolean;
 }
 
 export interface SetupInvestigator {
@@ -159,6 +175,7 @@ export type PromptKind =
   | 'combat'
   | 'cards'
   | 'bid'
+  | 'orient'
   | 'newInvestigator'
   | 'ack';
 

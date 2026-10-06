@@ -77,6 +77,29 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
     );
   }
 
+  if (prompt.kind === 'cards' && prompt.multi) {
+    return (
+      <div>
+        {header}
+        <div className="grid grid-cols-2 gap-2">
+          {prompt.options.map((o) => {
+            const on = picked.includes(o.key);
+            const img = cardImage(o.ref);
+            return (
+              <button key={o.key} className={`${secondary} ${on ? 'border-amber-300 bg-amber-900/40' : ''}`} onClick={() => setPicked(on ? picked.filter((k) => k !== o.key) : [...picked, o.key])}>
+                {img && <img src={img} alt="" className="mb-1 w-full rounded" />}
+                {on ? '✓ ' : ''}{o.label}
+              </button>
+            );
+          })}
+        </div>
+        <button className={`${primary} mt-3 w-full text-center font-semibold`} onClick={() => onAnswer(picked)}>
+          {picked.length ? `Confirm (${picked.length} selected)` : 'Confirm — nothing'}
+        </button>
+      </div>
+    );
+  }
+
   if (prompt.kind === 'cards') {
     return (
       <div>
@@ -110,11 +133,13 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
   }
 
   const card = prompt.data?.card as string | undefined;
-  const isMap = prompt.kind === 'move' || prompt.kind === 'destination';
+  const orientMonster = prompt.kind === 'orient' ? (prompt.data?.monster as string | undefined) : undefined;
+  const isMap = prompt.kind === 'move' || prompt.kind === 'destination' || prompt.kind === 'orient';
   return (
     <div>
       {header}
       {card && <img src={cardUrl(card)} alt="" className="mb-3 w-48 rounded shadow-lg" />}
+      {orientMonster && <img src={monsterUrl(MONSTER_BY_ID[orientMonster].art, 'back')} alt="" className="mb-2 h-28 w-28" />}
       {isMap && <p className="mb-2 text-xs text-amber-200/70">Click a highlighted space on the board, or choose below.</p>}
       <div className={`grid gap-2 ${isMap && prompt.options.length > 8 ? 'max-h-72 overflow-y-auto pr-1' : ''}`}>
         {prompt.options.map((o, i) => (

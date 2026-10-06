@@ -133,6 +133,15 @@ export function Setup({ onStart, onResume, onLoad }: Props) {
           <input type="checkbox" checked={options.teamFightBonus} onChange={(e) => setOptions({ ...options, teamFightBonus: e.target.checked })} /> Investigators fighting in the same space each get +1 Fight
         </label>
         <label className="block text-sm text-stone-200">
+          <input type="checkbox" checked={options.orientMonsters} onChange={(e) => setOptions({ ...options, orientMonsters: e.target.checked })} /> Players point each new monster's arrow (off: random heading)
+        </label>
+        <label className="block text-sm text-stone-200">
+          <input type="checkbox" checked={options.rescueLost} onChange={(e) => setOptions({ ...options, rescueLost: e.target.checked })} /> An investigator lost in an Other World can be rescued by another reaching the same box
+        </label>
+        <label className="block text-sm text-stone-200">
+          <input type="checkbox" checked={options.carryLimit} onChange={(e) => setOptions({ ...options, carryLimit: e.target.checked })} /> Strength limits how many items an investigator can pick up
+        </label>
+        <label className="block text-sm text-stone-200">
           <input type="checkbox" checked={options.honorByGateSp} onChange={(e) => setOptions({ ...options, honorByGateSp: e.target.checked })} /> First Citizen is decided by the total SP of gates closed
         </label>
       </section>

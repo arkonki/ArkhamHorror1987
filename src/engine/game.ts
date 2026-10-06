@@ -7,7 +7,7 @@
  * the same answer stream).
  */
 import {
-  NEIGHBORS, TAXI_SPACES, compass, nodeLabel, distances, isLocNode, locNode, nextStreetNode,
+  NEIGHBORS, STREET_NEIGHBORS, TAXI_SPACES, compass, nodeLabel, distances, isLocNode, locNode, nextStreetNode,
   nodeLoc, shortestPath, vehicleBlocked,
 } from './board';
 import { FLUTE_TARGETS, ITEM_BY_ID, LOCAL_CHARACTERS, SKILL_CARDS, SPELL_BY_ID } from './data/cards';
@@ -82,7 +82,7 @@ export class Game {
   }
 
   activeInvestigators(): Investigator[] {
-    return this.s.order.map((id) => this.inv(id)).filter((i) => !i.out && i.activeFrom <= this.s.turn);
+    return this.s.order.map((id) => this.inv(id)).filter((i) => !i.out && !i.stranded && i.activeFrom <= this.s.turn);
   }
 
   invsAt(node: string): Investigator[] {
@@ -183,6 +183,10 @@ export class Game {
           const inv = this.inv(id);
           if (inv.out || inv.activeFrom > this.s.turn) continue;
           this.s.active = id;
+          if (inv.stranded) {
+            yield* this.strandedTurn(inv);
+            continue;
+          }
           try {
             yield* this.investigatorTurn(inv);
           } catch (e) {
@@ -214,7 +218,7 @@ export class Game {
     const loc = GATE_APPEARANCE[a + b];
     const gate = this.drawGate(loc)!;
     this.log(`A gate to ${WORLDS[gate.world].name} opens at ${this.locName(loc)}! Three monsters emerge.`, 'mythos');
-    for (let i = 0; i < 3; i++) this.placeMonster(locNode(loc), false);
+    for (let i = 0; i < 3; i++) yield* this.appear(locNode(loc), null, false);
 
     // Setup step 8: highest 2D6 goes first, then play to the left.
     const rolls = s.order.map((id) => {
@@ -225,7 +229,6 @@ export class Game {
     s.order = [...s.order.slice(best), ...s.order.slice(0, best)];
     this.log(`${this.inv(s.order[0]).name} rolled highest and goes first.`, 'info');
     this.log('— Game turn 1 —', 'info');
-    yield* [];
   }
 
   dealStartingCards(inv: Investigator) {
@@ -267,6 +270,24 @@ export class Game {
       this.log(`${inv.name} draws an Auction card.`);
       yield* this.auction(inv);
       return;
+    }
+    yield* this.receiveItem(inv, id);
+  }
+
+  /** Take an item card into hand (OPTION: Strength limits how many items can be carried). */
+  *receiveItem(inv: Investigator, id: string): Flow {
+    if (this.s.setup.options.carryLimit && inv.items.length >= inv.str) {
+      const k = yield* this.choose(inv, `${inv.name} cannot carry more (Strength ${inv.str}, ${inv.items.length} items)`, [
+        ...inv.items.map((c) => ({ key: c.uid, label: `Drop ${ITEM_BY_ID[c.id].name} to take ${ITEM_BY_ID[id].name}`, ref: c.id })),
+        { key: 'leave', label: `Leave the ${ITEM_BY_ID[id].name} behind`, ref: id },
+      ]);
+      if (k === 'leave' || !k) {
+        this.discardCard('item', id);
+        return this.log(`${inv.name} leaves the ${ITEM_BY_ID[id].name} behind.`);
+      }
+      const dropped = inv.items.find((c) => c.uid === k);
+      this.removeItem(inv, k);
+      if (dropped) this.log(`${inv.name} drops ${ITEM_BY_ID[dropped.id].name}.`);
     }
     inv.items.push({ uid: this.uid('c'), id });
     this.log(`${inv.name} gains ${ITEM_BY_ID[id].name}.`);
@@ -321,6 +342,7 @@ export class Game {
     else inv[pool] = Math.min(MAX, inv[pool] + n);
     const label = pool === 'money' ? `$${n}` : `${n} ${pool === 'str' ? 'Strength' : 'Sanity'}`;
     this.log(`${inv.name} gains ${label}.`);
+    if (inv.stranded && inv.str > 0 && inv.san > 0) this.revive(inv, null);
   }
 
   *lose(inv: Investigator, pool: 'str' | 'san' | 'money', n: number): Flow {
@@ -339,7 +361,8 @@ export class Game {
   /** Out of Strength/Sanity: Hospital or Sanitarium in Arkham, lost in an Other World. */
   *knockout(inv: Investigator, pool: 'str' | 'san'): Flow {
     if (inv.place.t === 'world') {
-      yield* this.loseInvestigator(inv, pool === 'str' ? 'perished in an Other World' : 'went mad in an Other World');
+      if (this.s.setup.options.rescueLost) yield* this.strand(inv, pool);
+      else yield* this.loseInvestigator(inv, pool === 'str' ? 'perished in an Other World' : 'went mad in an Other World');
       throw new Interrupt(inv.id);
     }
     if (pool === 'str') {
@@ -372,8 +395,9 @@ export class Game {
     for (const uid of inv.trophies.gates) this.s.gateDeck.push(uid);
     this.rng.shuffle(this.s.gateDeck);
     if (inv.retainer) this.s.retainersLeft++;
+    if (inv.bound) this.toCup(this.s.monsters[inv.bound]);
     this.s.localCharsLeft.push(...inv.localChars);
-    Object.assign(inv, { items: [], spells: [], skillCards: [], localChars: [], retainer: false, automobile: false, out: true });
+    Object.assign(inv, { items: [], spells: [], skillCards: [], localChars: [], retainer: false, automobile: false, bound: null, stranded: false, waiting: false, out: true });
     inv.trophies = { monsters: [], gates: [] };
     yield* this.replaceInvestigator(inv);
   }
@@ -397,6 +421,65 @@ export class Game {
     this.log(`${fresh.name} arrives at the Train Station and will join the investigation next turn.`, 'info');
   }
 
+  // ---- OPTION: rescuing investigators lost in an Other World
+
+  *strand(inv: Investigator, pool: 'str' | 'san'): Flow {
+    const p = inv.place;
+    if (p.t !== 'world') return;
+    inv.stranded = true;
+    if (inv.bound) {
+      this.toCup(this.s.monsters[inv.bound]);
+      inv.bound = null;
+    }
+    this.log(`${inv.name} ${pool === 'str' ? 'collapses' : 'loses their mind'} in ${WORLDS[p.world].name} (box ${p.box}). Another investigator reaching this box may rescue them.`, 'warn');
+    const k = yield* this.choose(inv, `${inv.name} is lost in ${WORLDS[p.world].name}`, [
+      { key: 'wait', label: 'Wait for a rescue (do nothing until then)' },
+      { key: 'new', label: 'Start a new investigator now (the lost one can still be rescued)' },
+    ]);
+    inv.waiting = k === 'wait';
+    if (!inv.waiting) yield* this.replaceInvestigator(inv);
+  }
+
+  *strandedTurn(inv: Investigator): Flow {
+    if (!inv.waiting) return;
+    const k = yield* this.choose(inv, `${inv.name} waits to be rescued`, [
+      { key: 'wait', label: 'Keep waiting' },
+      { key: 'give', label: 'Give up: start a new investigator' },
+    ]);
+    if (k === 'give') yield* this.loseInvestigator(inv, 'is given up for lost');
+  }
+
+  /** Investigators (including stranded ones) in the same Other World box. */
+  worldMates(inv: Investigator): Investigator[] {
+    const p = inv.place;
+    if (p.t !== 'world') return [];
+    return Object.values(this.s.investigators).filter((o) => !o.out && o.place.t === 'world' && o.place.world === p.world && o.place.box === p.box);
+  }
+
+  /** Rescuer tries to carry stranded investigators along to the next box (Strength roll each). */
+  *carryAlong(inv: Investigator, others: Investigator[]): Flow<Investigator[]> {
+    const carried: Investigator[] = [];
+    for (const o of others) {
+      if (!(yield* this.yesNo(inv, `${o.name} lies here, lost`, `Carry ${o.name} along (Strength roll)`, 'Leave them'))) continue;
+      if (this.test(inv, 'str', 0, `carrying ${o.name}`)) carried.push(o);
+      else this.log(`${inv.name} cannot carry ${o.name} this time.`);
+    }
+    return carried;
+  }
+
+  /** A stranded investigator is rescued: in Arkham at `node`, or where they stand. */
+  revive(o: Investigator, node: string | null) {
+    o.stranded = false;
+    o.waiting = false;
+    o.activeFrom = this.s.turn + 1;
+    if (node) {
+      o.place = { t: 'arkham', node };
+      if (o.str === 0) o.place = { t: 'arkham', node: HOSPITAL };
+      else if (o.san === 0) o.place = { t: 'arkham', node: SANITARIUM };
+    }
+    this.log(`${o.name} is rescued and rejoins the investigation next turn!`, 'info');
+  }
+
   // ------------------------------------------------------------------ placement
 
   moveTo(inv: Investigator, node: string) {
@@ -410,6 +493,7 @@ export class Game {
   toCup(m: MonsterInst) {
     m.node = null;
     m.prev = null;
+    m.exit = null;
     m.vampireBonus = 0;
     if (!this.s.cup.includes(m.uid)) this.s.cup.push(m.uid);
   }
@@ -438,8 +522,41 @@ export class Game {
     }
     m.node = node;
     m.prev = null;
+    m.exit = null;
     this.log(`${d.species} appears at ${this.nodeName(node)}.`, 'mythos');
     return m;
+  }
+
+  /** A monster appears; a player points its arrow (or it is randomised, by option). */
+  *appear(node: string, chooser: Investigator | null, respectElderSign = true): Flow<MonsterInst | null> {
+    const m = this.placeMonster(node, respectElderSign);
+    if (m) yield* this.orient(m, chooser);
+    return m;
+  }
+
+  /** Choose the street a handed monster heads along from where it stands. */
+  *orient(m: MonsterInst, chooser: Investigator | null, force = false): Flow {
+    const d = this.def(m);
+    if (!m.node || d.speed === 0 || d.cls === 'flyer') return;
+    const cur = m.node;
+    const exits: { node: string; via: string }[] = [];
+    for (const e of isLocNode(cur) ? NEIGHBORS[cur] : [cur]) {
+      for (const n of STREET_NEIGHBORS[e]) if (!exits.some((x) => x.node === n)) exits.push({ node: n, via: e });
+    }
+    if (!exits.length) return;
+    if (!force && !this.s.setup.options.orientMonsters) {
+      m.exit = this.rng.pick(exits).node;
+      return;
+    }
+    const k = yield* this.ask({
+      kind: 'orient', inv: chooser?.id ?? null,
+      title: `Point the ${d.species}'s arrow`,
+      text: `${d.hand === 'L' ? 'Left' : 'Right'}-handed, moves ${d.speed}. Choose the street it heads along${isLocNode(cur) ? ` from ${this.nodeName(cur)}` : ''}.`,
+      nodes: exits.map((x) => x.node),
+      options: exits.map((x) => ({ key: x.node, label: `${compass(x.via, x.node)} ${this.nodeName(x.node)}${isLocNode(cur) && NEIGHBORS[cur].length > 1 ? ` (via ${this.nodeName(x.via)})` : ''}`, ref: x.node })),
+      data: { monster: m.def },
+    });
+    m.exit = exits.some((x) => x.node === k) ? k : exits[0].node;
   }
 
   /** Draw a gate card onto a location. Returns null if no gate cards remain (errata: ignore). */
@@ -504,13 +621,18 @@ export class Game {
       yield* this.worldEncounter(inv);
       return true;
     }
+    const lostHere = this.worldMates(inv).filter((o) => o.stranded);
     if (p.box === 2) {
+      const carried = yield* this.carryAlong(inv, lostHere);
       p.box = 1;
+      for (const o of carried) if (o.place.t === 'world') o.place.box = 1;
       this.log(`${inv.name} moves deeper into ${WORLDS[p.world].name}.`);
       yield* this.worldEncounter(inv);
       return true;
     }
+    const carried = yield* this.carryAlong(inv, lostHere);
     yield* this.returnToArkham(inv);
+    for (const o of carried) this.revive(o, this.node(inv));
     return false;
   }
 
@@ -520,6 +642,11 @@ export class Game {
     if (p.returnTo) {
       this.log(`${inv.name} returns to ${this.locName(p.returnTo)}.`);
       inv.place = { t: 'arkham', node: locNode(p.returnTo) };
+      return;
+    }
+    if (p.keyReturn) {
+      this.log(`${inv.name} follows the Silver Key back to ${this.nodeName(p.keyReturn)}.`);
+      inv.place = { t: 'arkham', node: p.keyReturn };
       return;
     }
     const gates = this.openGates().filter((g) => g.world === p.world);
@@ -617,6 +744,7 @@ export class Game {
       if (TAXI_SPACES.includes(cur) && inv.money >= 1) options.push({ key: 'taxi', label: 'Take a taxi ($1)' });
       const mists = this.spellReady(inv, 'mists_of_rlyeh');
       if (mists && !passMists && left > 0) options.push({ key: 'mists', label: "Cast Mists of R'lyeh (move past monsters)" });
+      if (this.hasItem(inv, 'silver_key')) options.push({ key: 'u:key', label: 'Use the Silver Key: pass into the Dreamlands' });
       const k = yield* this.ask({
         kind: 'move', inv: inv.id, title: `${inv.name}: move (${left} left)`, options,
         nodes: left > 0 ? NEIGHBORS[cur] : [], data: { left, from: cur },
@@ -626,6 +754,7 @@ export class Game {
         inv.money -= 1;
         return yield* this.ride(inv, 'any', false, 'Taxi');
       }
+      if (k === 'u:key') return yield* this.useUtility(inv, k);
       if (k === 'mists') {
         passMists = yield* this.castSpell(inv, mists!.uid);
         if (passMists) inv.turn.autoSneak = true;
@@ -825,7 +954,7 @@ export class Game {
       }
       case 'monster': {
         if (inv.place.t === 'world') return yield* this.worldMonster(inv);
-        const m = this.placeMonster(this.node(inv)!);
+        const m = yield* this.appear(this.node(inv)!, inv);
         if (m) yield* this.meetMonsters(inv);
         return;
       }
@@ -1092,19 +1221,20 @@ export class Game {
         for (const b of ring) {
           if (passed.has(b.id) || high?.inv === b) continue;
           const min: number = (high?.bid ?? 0) + 1;
-          if (b.money < min) {
+          // Items may be bid at their cash (list) value.
+          const worth = b.money + b.items.reduce((n, c) => n + ITEM_BY_ID[c.id].price, 0);
+          if (worth < min) {
             passed.add(b.id);
             continue;
           }
-          const bids = [min, min + 1, min + 2, min + 5].filter((v, i, a) => v <= b.money && a.indexOf(v) === i);
-          if (b.money > min + 5) bids.push(b.money);
+          const bids = [min, min + 1, min + 2, min + 5, b.money, worth].filter((v, i, a) => v >= min && v <= worth && a.indexOf(v) === i).sort((x, y) => x - y);
           const k: string = yield* this.ask({
             kind: 'bid', inv: b.id, title: `Auction: ${it.name}`, text: high ? `High bid: $${high.bid} by ${high.inv.name}` : 'No bids yet.',
-            options: [...bids.map((v) => ({ key: String(v), label: `Bid $${v}` })), { key: 'pass', label: 'Pass' }], data: { card: id },
+            options: [...bids.map((v) => ({ key: String(v), label: `Bid $${v}${v > b.money ? ' (paying partly with items)' : ''}` })), { key: 'pass', label: 'Pass' }], data: { card: id },
           });
           if (k === 'pass') passed.add(b.id);
           else {
-            high = { inv: b, bid: Math.max(min, Math.min(b.money, Number(k))) };
+            high = { inv: b, bid: Math.max(min, Math.min(worth, Number(k))) };
             progress = true;
           }
           if (ring.filter((x) => !passed.has(x.id) && x !== high?.inv).length === 0) break;
@@ -1112,21 +1242,49 @@ export class Game {
         if (!progress) break;
       }
       if (high) {
-        high.inv.money -= high.bid;
+        yield* this.payWithItems(high.inv, high.bid, it.name);
         if (high.inv !== auctioneer) {
           const share = Math.floor(high.bid / 2);
           auctioneer.money += share;
           this.log(`${high.inv.name} buys ${it.name} for $${high.bid}; ${auctioneer.name} receives $${share}.`);
         } else this.log(`${auctioneer.name} buys ${it.name} for $${high.bid}.`);
-        high.inv.items.push({ uid: this.uid('c'), id });
+        yield* this.receiveItem(high.inv, id);
       } else if (auctioneer.money >= it.price && (yield* this.yesNo(auctioneer, `${it.name} went unsold`, `Buy it at list price ($${it.price})`, 'Discard it'))) {
         auctioneer.money -= it.price;
-        auctioneer.items.push({ uid: this.uid('c'), id });
         this.log(`${auctioneer.name} buys ${it.name} at list price.`);
+        yield* this.receiveItem(auctioneer, id);
       } else {
         this.discardCard('item', id);
         this.log(`${it.name} goes unsold.`);
       }
+    }
+  }
+
+  /** Pay an auction price in cash, or partly with items at their list price (change from the bank). */
+  *payWithItems(inv: Investigator, amount: number, what: string): Flow {
+    let owed = amount;
+    let withItems = inv.money < amount;
+    if (!withItems && inv.items.length) {
+      withItems = (yield* this.choose(inv, `Pay $${amount} for ${what}`, [
+        { key: 'cash', label: `Pay $${amount} in cash` },
+        { key: 'items', label: 'Hand over items at their list price' },
+      ])) === 'items';
+    }
+    while (withItems && owed > 0 && inv.items.length) {
+      const opts: PromptOption[] = inv.items.map((c) => ({ key: c.uid, label: `${ITEM_BY_ID[c.id].name} ($${ITEM_BY_ID[c.id].price})`, ref: c.id }));
+      if (inv.money >= owed) opts.push({ key: 'cash', label: `Pay the remaining $${owed} in cash` });
+      const k = yield* this.choose(inv, `Pay for ${what}: $${owed} still owed`, opts);
+      if (k === 'cash' || !k) break;
+      const c = inv.items.find((x) => x.uid === k);
+      if (!c) break;
+      owed -= ITEM_BY_ID[c.id].price;
+      this.removeItem(inv, c.uid);
+      this.log(`${inv.name} hands over ${ITEM_BY_ID[c.id].name}.`);
+    }
+    if (owed > 0) inv.money = Math.max(0, inv.money - owed);
+    else if (owed < 0) {
+      inv.money -= owed;
+      this.log(`${inv.name} receives $${-owed} in change.`);
     }
   }
 
@@ -1143,11 +1301,18 @@ export class Game {
     if (this.hasItem(inv, 'brazen_head')) out.push({ key: 'u:brazen_head', label: 'Consult the Brazen Head' });
     const mons = node ? this.monstersAt(node) : [];
     if (mons.length) {
-      if (ready('bind_monster')) out.push({ key: 'u:bind', label: 'Cast Bind Monster (banish)' });
+      if (ready('bind_monster') && mons.some((m) => this.def(m).cls !== 'power')) out.push({ key: 'u:bind', label: 'Cast Bind Monster' });
       if (this.hasItem(inv, 'flute_of_the_outer_gods')) out.push({ key: 'u:flute', label: 'Play the Flute of the Outer Gods' });
       for (const id of ['dragons_eye', 'blue_watcher']) if (this.hasItem(inv, id)) out.push({ key: `u:banish:${id}`, label: `Banish a monster with ${ITEM_BY_ID[id].name}` });
     }
-    if (here.length > 1) out.push({ key: 'u:trade', label: 'Give or trade with an investigator here' });
+    if (this.hasItem(inv, 'silver_key')) {
+      if (node) out.push({ key: 'u:key', label: 'Use the Silver Key: pass into the Dreamlands' });
+      else if (inv.place.t === 'world' && inv.place.world === 'earths_dreamlands' && inv.silverKey) {
+        out.push({ key: 'u:keyBack', label: `Use the Silver Key: return to ${this.nodeName(inv.silverKey)}` });
+      }
+    }
+    if (this.tradePartners(inv).length) out.push({ key: 'u:trade', label: 'Trade with an investigator here' });
+    void here;
     return out;
   }
 
@@ -1171,9 +1336,9 @@ export class Game {
 
   *pickTarget(inv: Investigator, title: string): Flow<Investigator> {
     const node = this.node(inv);
-    const here = node ? this.invsAt(node) : [inv];
+    const here = node ? this.invsAt(node) : this.worldMates(inv);
     if (here.length <= 1) return inv;
-    const k = yield* this.choose(inv, title, here.map((i) => ({ key: i.id, label: i.name })));
+    const k = yield* this.choose(inv, title, here.map((i) => ({ key: i.id, label: `${i.name}${i.stranded ? ' (lost)' : ''}` })));
     return this.inv(k) ?? inv;
   }
 
@@ -1206,7 +1371,7 @@ export class Game {
         const [d] = this.roll('Brazen Head');
         if (d < 6) this.drawSpells(inv, 1);
         else if (this.node(inv)) {
-          const m = this.placeMonster(this.node(inv)!);
+          const m = yield* this.appear(this.node(inv)!, inv);
           if (m) yield* this.meetMonsters(inv);
         }
       }
@@ -1216,12 +1381,39 @@ export class Game {
       const card = this.spellReady(inv, 'bind_monster')!;
       const m = yield* this.pickMonster(inv, 'Bind Monster: choose a target', (x) => this.def(x).cls !== 'power');
       if (!m) return this.log('Powers are immune to Bind Monster.');
+      const mode = inv.bound ? 'banish' : yield* this.choose(inv, `Bind the ${this.mName(m)}`, [
+        { key: 'banish', label: 'Banish it from Earth (to your trophy pile)' },
+        { key: 'bind', label: 'Bind it to travel with you and attack a monster or gate' },
+      ]);
       if (yield* this.castSpell(inv, card.uid)) {
         this.removeSpell(inv, card.uid);
-        this.log(`${inv.name} banishes the ${this.mName(m)}.`);
-        this.awardMonster(inv, m);
+        if (mode === 'bind') {
+          m.node = null;
+          m.prev = null;
+          m.exit = null;
+          inv.bound = m.uid;
+          this.log(`${inv.name} binds the ${this.mName(m)} to their will.`, 'info');
+        } else {
+          this.log(`${inv.name} banishes the ${this.mName(m)}.`);
+          this.awardMonster(inv, m);
+        }
       }
       return;
+    }
+    if (key === 'u:key') {
+      const node = this.node(inv)!;
+      for (const m of this.monstersAt(node)) yield* this.sanityCheck(inv, m);
+      inv.silverKey = node;
+      inv.place = { t: 'world', world: 'earths_dreamlands', box: 2, gate: null, keyReturn: node };
+      this.log(`${inv.name} turns the Silver Key and passes into the Dreamlands.`, 'info');
+      yield* this.worldEncounter(inv);
+      throw new Interrupt(inv.id);
+    }
+    if (key === 'u:keyBack') {
+      const node = inv.silverKey!;
+      inv.place = { t: 'arkham', node };
+      this.log(`${inv.name} turns the Silver Key and returns to ${this.nodeName(node)}.`, 'info');
+      throw new Interrupt(inv.id);
     }
     if (key === 'u:flute') {
       const m = yield* this.pickMonster(inv, 'Flute of the Outer Gods: choose a target',
@@ -1252,39 +1444,73 @@ export class Game {
     yield* this.lose(inv, 'str', this.roll('Concussion')[0]);
   }
 
-  *trade(inv: Investigator): Flow {
-    const others = this.invsAt(this.node(inv)!).filter((i) => i !== inv);
-    const to = this.inv(yield* this.choose(inv, 'Give to whom?', others.map((o) => ({ key: o.id, label: o.name }))));
-    if (!to) return;
+  /** Investigators who may trade with `inv`: same Arkham space, or same Other World box. */
+  tradePartners(inv: Investigator): Investigator[] {
+    const node = this.node(inv);
+    const mates = node ? this.invsAt(node) : this.worldMates(inv);
+    return mates.filter((o) => o !== inv);
+  }
+
+  *tradeOffer(from: Investigator, to: Investigator, title: string): Flow<{ cards: string[]; money: number; label: string }> {
     const opts: PromptOption[] = [];
-    if (inv.money > 0) opts.push({ key: 'money', label: 'Money' });
-    for (const c of inv.items) opts.push({ key: `i:${c.uid}`, label: ITEM_BY_ID[c.id].name, ref: c.id });
-    for (const c of inv.spells) opts.push({ key: `s:${c.uid}`, label: SPELL_BY_ID[c.id].name, ref: c.id });
-    for (const id of inv.localChars) opts.push({ key: `l:${id}`, label: LOCAL_CHARACTERS.find((x) => x.id === id)!.name });
-    if (inv.charity) opts.push({ key: 'charity', label: 'Charity card' });
-    opts.push({ key: 'cancel', label: 'Cancel' });
-    const k = yield* this.choose(inv, `Give to ${to.name}`, opts);
-    if (k === 'money') {
-      const amts = [1, 2, 5, 10, inv.money].filter((v, i, a) => v <= inv.money && a.indexOf(v) === i);
-      const n = Number(yield* this.choose(inv, 'How much?', amts.map((v) => ({ key: String(v), label: `$${v}` }))));
-      inv.money -= n;
-      to.money += n;
-      return this.log(`${inv.name} gives $${n} to ${to.name}.`);
+    for (const c of from.items) opts.push({ key: `i:${c.uid}`, label: ITEM_BY_ID[c.id].name, ref: c.id });
+    for (const c of from.spells) opts.push({ key: `s:${c.uid}`, label: SPELL_BY_ID[c.id].name, ref: c.id });
+    for (const id of from.localChars) opts.push({ key: `l:${id}`, label: LOCAL_CHARACTERS.find((x) => x.id === id)!.name });
+    if (from.charity && !to.charity) opts.push({ key: 'charity', label: from.charity === 'owed' ? 'Charity card (repayment owed)' : 'Charity card' });
+    let cards: string[] = [];
+    if (opts.length) {
+      const a = yield { kind: 'cards', inv: from.id, multi: true, title, text: 'Select any cards to hand over (or none).', options: opts } as Prompt;
+      cards = (Array.isArray(a) ? a : [a]).filter((k) => opts.some((o) => o.key === k));
     }
-    if (k.startsWith('i:')) {
-      const i = inv.items.findIndex((c) => c.uid === k.slice(2));
-      to.items.push(...inv.items.splice(i, 1));
-    } else if (k.startsWith('s:')) {
-      const i = inv.spells.findIndex((c) => c.uid === k.slice(2));
-      to.spells.push(...inv.spells.splice(i, 1));
-    } else if (k.startsWith('l:')) {
-      inv.localChars = inv.localChars.filter((x) => x !== k.slice(2));
-      to.localChars.push(k.slice(2));
-    } else if (k === 'charity' && !to.charity) {
-      to.charity = inv.charity;
-      inv.charity = null;
-    } else return;
-    this.log(`${inv.name} hands something to ${to.name}.`);
+    let money = 0;
+    if (from.money > 0) {
+      const amts = [0, 1, 2, 5, 10, from.money].filter((v, i, a) => v <= from.money && a.indexOf(v) === i);
+      money = Number(yield* this.choose(from, `${from.name}: add money?`, amts.map((v) => ({ key: String(v), label: v ? `$${v}` : 'No money' }))));
+    }
+    const names = cards.map((k) => opts.find((o) => o.key === k)!.label);
+    if (money) names.push(`$${money}`);
+    return { cards, money, label: names.length ? names.join(', ') : 'nothing' };
+  }
+
+  transfer(from: Investigator, to: Investigator, offer: { cards: string[]; money: number }) {
+    from.money -= offer.money;
+    to.money += offer.money;
+    for (const k of offer.cards) {
+      if (k.startsWith('i:')) to.items.push(...from.items.splice(from.items.findIndex((c) => c.uid === k.slice(2)), 1));
+      else if (k.startsWith('s:')) to.spells.push(...from.spells.splice(from.spells.findIndex((c) => c.uid === k.slice(2)), 1));
+      else if (k.startsWith('l:')) {
+        from.localChars = from.localChars.filter((x) => x !== k.slice(2));
+        to.localChars.push(k.slice(2));
+      } else if (k === 'charity') {
+        to.charity = from.charity;
+        from.charity = null;
+      }
+    }
+  }
+
+  /** Two-way trade between investigators sharing a space (Making Trades). */
+  *trade(inv: Investigator): Flow {
+    const others = this.tradePartners(inv);
+    if (!others.length) return;
+    const partner = others.length === 1 ? others[0]
+      : this.inv(yield* this.choose(inv, 'Trade with whom?', others.map((o) => ({ key: o.id, label: o.name }))));
+    if (!partner) return;
+    const give = yield* this.tradeOffer(inv, partner, `${inv.name}: what do you offer ${partner.name}?`);
+    const get = yield* this.tradeOffer(partner, inv, `${partner.name}: what do you give ${inv.name} in return?`);
+    if (!give.cards.length && !give.money && !get.cards.length && !get.money) return;
+    if (this.s.setup.options.carryLimit) {
+      const items = (o: { cards: string[] }) => o.cards.filter((k) => k.startsWith('i:')).length;
+      for (const [who, n] of [[partner, partner.items.length + items(give) - items(get)], [inv, inv.items.length + items(get) - items(give)]] as const) {
+        if (n > who.items.length && n > who.str) {
+          return this.log(`${who.name} cannot carry that many items (Strength ${who.str}). The trade is off.`, 'warn');
+        }
+      }
+    }
+    const ok = yield* this.yesNo(inv, 'Accept the trade?', 'Shake hands', 'Call it off', `${inv.name} gives: ${give.label}\n${partner.name} gives: ${get.label}`);
+    if (!ok) return this.log('The trade is called off.');
+    this.transfer(inv, partner, give);
+    this.transfer(partner, inv, get);
+    this.log(`${inv.name} and ${partner.name} trade: ${give.label} for ${get.label}.`);
   }
 
   // ------------------------------------------------------------------ monsters & combat
@@ -1329,6 +1555,9 @@ export class Game {
       opts.push({ key: 'silver', label: 'Fire the Silver Bullet' });
     }
     if (target.monster && this.hasItem(inv, 'piccolo_of_leng') && !inv.turn.usedPiccolo) opts.push({ key: 'piccolo', label: 'Play the Piccolo of Leng (no counterattack on heads)' });
+    const bound = inv.bound ? this.s.monsters[inv.bound] : null;
+    const sameSpecies = !!bound && !!d && this.def(bound).species === d.species;
+    if (bound) opts.push({ key: 'bound', label: `Bound ${this.mName(bound)} attacks (+${this.monsterSp(bound)}${sameSpecies ? ' magical' : ' physical'})`, ref: bound.def });
 
     const sp = target.monster ? this.monsterSp(target.monster) : target.gate!.sp;
     let chosen: string[] = [];
@@ -1387,6 +1616,11 @@ export class Game {
     if (this.s.setup.options.teamFightBonus && this.node(inv) && this.invsAt(this.node(inv)!).length > 1) total += 1;
     if (inv.turn.holyWater) total += 6;
     for (const k of chosen) {
+      if (k === 'bound' && bound) {
+        // A bound monster's attack is physical, except against its own species (magical).
+        total += sameSpecies ? this.monsterSp(bound) : physical(this.monsterSp(bound));
+        continue;
+      }
       const item = inv.items.find((c) => c.uid === k);
       if (item) {
         const it = ITEM_BY_ID[item.id];
@@ -1406,7 +1640,35 @@ export class Game {
     const win = total >= sp;
     this.s.lastRoll = { label: `${inv.name}: attack total ${total} vs SP ${sp}`, dice: [die], success: win };
     this.log(`${inv.name} attacks with a total of ${total} against SP ${sp}: ${win ? 'success!' : 'not enough.'}`, 'combat');
+    if (win && bound && chosen.includes('bound')) yield* this.releaseBound(inv, bound, !!target.gate);
     return { win, noCounter };
+  }
+
+  /** After a successful attack the bound monster goes through the gate (trophy) or is set free nearby. */
+  *releaseBound(inv: Investigator, m: MonsterInst, intoGate: boolean): Flow {
+    inv.bound = null;
+    if (intoGate) {
+      inv.trophies.monsters.push(m.uid);
+      return this.log(`The bound ${this.mName(m)} is sucked through the gate.`, 'info');
+    }
+    const node = this.node(inv);
+    const spots = node ? (isLocNode(node) ? NEIGHBORS[node] : STREET_NEIGHBORS[node]) : [];
+    if (!spots.length) {
+      this.log(`The bound ${this.mName(m)} is released and vanishes.`);
+      return this.toCup(m);
+    }
+    let dest = spots[0];
+    if (spots.length > 1) {
+      dest = yield* this.ask({
+        kind: 'destination', inv: inv.id, title: `Set the ${this.mName(m)} free — where?`, nodes: spots,
+        options: spots.map((n) => ({ key: n, label: this.nodeName(n), ref: n })),
+      });
+      if (!spots.includes(dest)) dest = spots[0];
+    }
+    m.node = dest;
+    m.prev = null;
+    this.log(`The ${this.mName(m)} is released at ${this.nodeName(dest)}.`);
+    yield* this.orient(m, inv, true);
   }
 
   /** A monster's attack or counterattack lands (unless warded off). */
@@ -1552,16 +1814,22 @@ export class Game {
   *worldEncounter(inv: Investigator): Flow {
     const p = inv.place;
     if (p.t !== 'world') return;
-    const fg = this.spellReady(inv, 'find_gate');
-    if (fg && !p.returnTo) {
-      const k = yield* this.choose(inv, `${inv.name} in ${WORLDS[p.world].name} (box ${p.box})`, [
-        { key: 'roll', label: 'Roll on the gate table' },
-        { key: 'find', label: 'Cast Find Gate and return to Arkham' },
-      ]);
-      if (k === 'find' && (yield* this.castSpell(inv, fg.uid))) {
-        yield* this.returnToArkham(inv);
-        throw new Interrupt(inv.id);
+    for (;;) {
+      const fg = this.spellReady(inv, 'find_gate');
+      const opts: PromptOption[] = [{ key: 'roll', label: 'Roll on the gate table' }];
+      if (fg && !p.returnTo) opts.push({ key: 'find', label: 'Cast Find Gate and return to Arkham' });
+      opts.push(...this.utilityOptions(inv));
+      if (opts.length === 1) break;
+      const k = yield* this.choose(inv, `${inv.name} in ${WORLDS[p.world].name} (box ${p.box})`, opts);
+      if (k === 'roll' || !k) break;
+      if (k === 'find') {
+        if (yield* this.castSpell(inv, fg!.uid)) {
+          yield* this.returnToArkham(inv);
+          throw new Interrupt(inv.id);
+        }
+        continue;
       }
+      yield* this.useUtility(inv, k);
     }
     const w = WORLDS[p.world];
     const [d] = this.roll(`${w.name} gate table`);
@@ -1587,7 +1855,12 @@ export class Game {
         const fg = this.spellReady(inv, 'find_gate');
         const opts: PromptOption[] = [{ key: 'fight', label: `Fight the ${d.species}`, ref: m.def }, { key: 'sneak', label: 'Sneak away' }];
         if (fg) opts.push({ key: 'find', label: 'Cast Find Gate and return to Arkham' });
+        opts.push(...this.utilityOptions(inv).filter((o) => o.key === 'u:keyBack'));
         const k = yield* this.choose(inv, `${inv.name} faces a ${d.species}`, opts);
+        if (k === 'u:keyBack') {
+          this.toCup(m);
+          yield* this.useUtility(inv, k);
+        }
         if (k === 'find' && (yield* this.castSpell(inv, fg!.uid))) {
           this.toCup(m);
           yield* this.returnToArkham(inv);
@@ -1644,14 +1917,14 @@ export class Game {
     if (this.s.elderSigns.includes(loc)) return this.log('The Elder Sign holds; nothing appears.');
     const existing = this.gateAt(loc);
     if (existing) {
-      const m = this.placeMonster(node);
+      const m = yield* this.appear(node, inv);
       if (m) yield* this.meetMonsters(inv);
       return;
     }
     const gate = this.drawGate(loc);
     if (!gate) return;
     this.log(`A gate to ${WORLDS[gate.world].name} tears open at ${this.locName(loc)}!`, 'mythos');
-    this.placeMonster(node);
+    yield* this.appear(node, inv);
     gate.faceUp = true;
     inv.place = { t: 'world', world: gate.world, box: 2, gate: gate.uid };
     this.log(`${inv.name} is swept through into ${WORLDS[gate.world].name}.`, 'warn');
@@ -1735,19 +2008,18 @@ export class Game {
     if (this.s.elderSigns.includes(loc)) {
       this.log('An Elder Sign protects it; nothing appears.', 'mythos');
     } else if (this.gateAt(loc)) {
-      this.placeMonster(locNode(loc));
+      yield* this.appear(locNode(loc), null);
     } else {
       const g = this.drawGate(loc);
       if (g) {
         this.log(`A gate opens at ${this.locName(loc)}!`, 'mythos');
-        this.placeMonster(locNode(loc));
+        yield* this.appear(locNode(loc), null);
       }
     }
     if (GATE_EXTRA_MONSTER[this.s.setup.options.gateTable].includes(total)) {
-      for (const g of this.openGates()) if (g.location !== loc) this.placeMonster(locNode(g.location!));
+      for (const g of this.openGates()) if (g.location !== loc) yield* this.appear(locNode(g.location!), null);
     }
     // Investigators already at a location where something appeared will face it during monster attacks.
-    yield* [];
   }
 
   /** Mythos Step 2: all monsters move. */
@@ -1788,8 +2060,12 @@ export class Game {
       let prev = m.prev;
       for (let i = 0; i < d.speed; i++) {
         let next: string;
-        if (isLocNode(cur)) next = this.rng.pick(NEIGHBORS[cur]);
-        else next = nextStreetNode(prev, cur, d.hand ?? 'R', (opts) => this.rng.pick(opts));
+        const exit = m.exit;
+        if (isLocNode(cur)) next = NEIGHBORS[cur].find((e) => exit && STREET_NEIGHBORS[e].includes(exit)) ?? this.rng.pick(NEIGHBORS[cur]);
+        else if (exit && STREET_NEIGHBORS[cur].includes(exit)) {
+          next = exit;
+          m.exit = null;
+        } else next = nextStreetNode(prev, cur, d.hand ?? 'R', (opts) => this.rng.pick(opts));
         prev = cur;
         cur = next;
         if (stopAt.has(cur)) break;
