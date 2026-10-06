@@ -1,1 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Crimson+Pro:wght@400;600;700&display=swap');
 @import "tailwindcss";
+
+@theme {
+  --font-display: 'IM Fell English SC', Georgia, serif;
+  --font-sans: 'Crimson Pro', Georgia, serif;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(ellipse at top, #292018 0%, #0c0a09 70%) fixed;
+  color: #e7e5e4;
+  font-family: var(--font-sans);
+  font-size: 17px;
+}
