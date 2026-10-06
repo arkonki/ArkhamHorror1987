@@ -15,9 +15,16 @@ import {
   INITIAL_SKILLS,
   INITIAL_SPELLS,
   LOCATIONS_DATA,
-  OTHER_WORLDS,
-  STREET_NODES
+  OTHER_WORLDS
 } from '../data/rules1987';
+import {
+  BOARD_NODES,
+  BOARD_ADJACENCY,
+  getNeighbors,
+  getReachableNodes,
+  getLocationIdForNode,
+  getNodeForLocation
+} from '../data/boardGraph';
 
 export function rollD6(): number {
   return Math.floor(Math.random() * 6) + 1;
@@ -70,7 +77,7 @@ export function createInvestigator(
     sanity: san,
     money: 13, // 1987 rule: deal $13 from the bank
     hasRetainer: false,
-    locationNodeId: 'node_train_station', // Rule: Place investigator tokens in play at the Train Station
+    locationNodeId: 'LOC_TRAIN_STATION', // Rule: Place investigator tokens in play at the Train Station
     items,
     spells,
     skills,
@@ -153,7 +160,7 @@ export function initializeGame(
 
   // Rule Step 7: Randomly select three monsters and put them face up on the gated location
   const activeMonsters: Monster[] = [];
-  const locationEntryNode = LOCATIONS_DATA[gateLocInfo.locationId]?.pointerNodeId || 'node_train_station';
+  const locationEntryNode = getNodeForLocation(gateLocInfo.locationId) || 'LOC_TRAIN_STATION';
 
   for (let i = 0; i < 3 && monsterCup.length > 0; i++) {
     const m = monsterCup.pop()!;
@@ -205,45 +212,14 @@ export function initializeGame(
   };
 }
 
-// Graph movement validator
+// Graph movement validator using official boardGraph
 export function getAvailableMoveNodes(
   currentNodeId: string,
   movesRemaining: number,
   activeMonsters: Monster[]
 ): string[] {
-  if (movesRemaining <= 0) return [currentNodeId];
-
-  const reachable = new Set<string>();
-  const queue: { nodeId: string; remaining: number }[] = [{ nodeId: currentNodeId, remaining: movesRemaining }];
-  const visited = new Map<string, number>();
-
-  while (queue.length > 0) {
-    const { nodeId, remaining } = queue.shift()!;
-    reachable.add(nodeId);
-
-    if (remaining <= 0) continue;
-
-    // Check if monster in this space: if moving through a space with a monster, you must stop!
-    const hasMonster = activeMonsters.some(m => m.currentNodeId === nodeId && nodeId !== currentNodeId);
-    if (hasMonster) {
-      // Must stop here, cannot proceed further
-      continue;
-    }
-
-    const node = STREET_NODES[nodeId];
-    if (!node) continue;
-
-    for (const neighborId of node.connectedTo) {
-      const nextRemaining = remaining - 1;
-      const prevBest = visited.get(neighborId);
-      if (prevBest === undefined || prevBest < nextRemaining) {
-        visited.set(neighborId, nextRemaining);
-        queue.push({ nodeId: neighborId, remaining: nextRemaining });
-      }
-    }
-  }
-
-  return Array.from(reachable);
+  const monsterNodes = activeMonsters.map(m => m.currentNodeId);
+  return getReachableNodes(currentNodeId, movesRemaining, monsterNodes);
 }
 
 // Mythos monster movement algorithm adhering to 1987 rules
@@ -258,9 +234,8 @@ export function executeMonsterMovement(
       return m;
     }
 
-    let currentNode = STREET_NODES[m.currentNodeId];
+    let currentNode = BOARD_NODES[m.currentNodeId];
     if (!currentNode) {
-      // Monster might be in a location, move to pointer
       return m;
     }
 
@@ -277,7 +252,7 @@ export function executeMonsterMovement(
     }
 
     // 3. Regular monsters move based on connected paths and handedness
-    const neighbors = currentNode.connectedTo;
+    const neighbors = getNeighbors(m.currentNodeId);
     if (neighbors.length === 0) return m;
 
     let chosenNode = neighbors[0];
@@ -291,7 +266,8 @@ export function executeMonsterMovement(
       }
     }
 
-    logs.push(`${m.name} prowled from ${currentNode.name} to ${STREET_NODES[chosenNode]?.name || chosenNode}.`);
+    const destLabel = BOARD_NODES[chosenNode]?.label || chosenNode;
+    logs.push(`${m.name} prowled from ${currentNode.label || currentNode.id} to ${destLabel}.`);
     return { ...m, currentNodeId: chosenNode };
   });
 
@@ -300,15 +276,14 @@ export function executeMonsterMovement(
 
 function findNearestInvestigator(startNodeId: string, investigators: Investigator[]): Investigator | null {
   if (investigators.length === 0) return null;
-  // Simple distance comparison based on coordinates
-  const startNode = STREET_NODES[startNodeId];
+  const startNode = BOARD_NODES[startNodeId];
   if (!startNode) return investigators[0];
 
   let nearest = investigators[0];
   let minDistance = Infinity;
 
   for (const inv of investigators) {
-    const invNode = STREET_NODES[inv.locationNodeId] || LOCATIONS_DATA[inv.locationNodeId];
+    const invNode = BOARD_NODES[inv.locationNodeId];
     if (!invNode) continue;
     const dist = Math.hypot(startNode.x - invNode.x, startNode.y - invNode.y);
     if (dist < minDistance) {
@@ -322,15 +297,15 @@ function findNearestInvestigator(startNodeId: string, investigators: Investigato
 
 function getStepTowards(startNodeId: string, targetNodeId: string): string | null {
   if (startNodeId === targetNodeId) return null;
-  const start = STREET_NODES[startNodeId];
-  const target = STREET_NODES[targetNodeId];
+  const start = BOARD_NODES[startNodeId];
+  const target = BOARD_NODES[targetNodeId];
   if (!start || !target) return null;
 
   let bestNeighbor: string | null = null;
   let bestDist = Infinity;
 
-  for (const neighborId of start.connectedTo) {
-    const neighbor = STREET_NODES[neighborId];
+  for (const neighborId of getNeighbors(startNodeId)) {
+    const neighbor = BOARD_NODES[neighborId];
     if (!neighbor) continue;
     const dist = Math.hypot(neighbor.x - target.x, neighbor.y - target.y);
     if (dist < bestDist) {

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   GameState,
   Investigator,
@@ -8,21 +8,26 @@ import {
 } from '../types/game';
 import {
   LOCATIONS_DATA,
-  STREET_NODES,
   OTHER_WORLDS
 } from '../data/rules1987';
+import {
+  BOARD_NODES,
+  BOARD_RAW_EDGES,
+  getLocationIdForNode,
+  getNodeDisplayLabel,
+  getNeighbors
+} from '../data/boardGraph';
 import { sound } from '../utils/audio';
 import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
   Crosshair,
-  Compass,
-  MapPin,
   Sparkles,
   Skull,
-  Eye,
-  Car
+  Compass,
+  Footprints,
+  ShieldAlert
 } from 'lucide-react';
 
 interface GameBoardProps {
@@ -31,6 +36,11 @@ interface GameBoardProps {
   onLocationClick: (locId: string) => void;
   onOtherWorldClick?: (worldId: OtherWorldId) => void;
   reachableNodes: string[];
+  adjacentNodes?: string[];
+  movingPawn?: {
+    investigatorId: string;
+    currentNodeId: string;
+  } | null;
 }
 
 export const GameBoard: React.FC<GameBoardProps> = ({
@@ -38,12 +48,15 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   onNodeClick,
   onLocationClick,
   onOtherWorldClick,
-  reachableNodes
+  reachableNodes,
+  adjacentNodes = [],
+  movingPawn = null
 }) => {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const activeInvestigator = gameState.investigators[gameState.activeInvestigatorIndex];
@@ -51,7 +64,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   // Center on active investigator
   const centerOnActiveInvestigator = () => {
     if (!activeInvestigator) return;
-    const locNode = STREET_NODES[activeInvestigator.locationNodeId] || LOCATIONS_DATA[activeInvestigator.locationNodeId];
+    const locNode = BOARD_NODES[activeInvestigator.locationNodeId];
     if (locNode) {
       setPan({
         x: 480 - locNode.x * zoom,
@@ -109,14 +122,20 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     setZoom(prev => Math.min(2.5, Math.max(0.6, prev * zoomFactor)));
   };
 
-  // Find monsters on a specific node or location
+  // Find monsters on a specific node
   const getMonstersAtNode = (nodeId: string) => {
     return gameState.activeMonsters.filter(m => m.currentNodeId === nodeId);
   };
 
-  // Find investigators on a specific node or location
+  // Find investigators on a specific node
   const getInvestigatorsAtNode = (nodeId: string) => {
-    return gameState.investigators.filter(inv => inv.locationNodeId === nodeId && !inv.otherWorldState);
+    return gameState.investigators.filter(inv => {
+      // If moving animation active, show moving investigator at animated node
+      if (movingPawn && inv.id === movingPawn.investigatorId) {
+        return movingPawn.currentNodeId === nodeId && !inv.otherWorldState;
+      }
+      return inv.locationNodeId === nodeId && !inv.otherWorldState;
+    });
   };
 
   const getGateAtLocation = (locId: string) => {
@@ -133,6 +152,10 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     black: '#1f2937',
     silver: '#94a3b8'
   };
+
+  // Immediate neighbors of active investigator
+  const currentActiveNode = activeInvestigator?.locationNodeId || '';
+  const directStepNeighbors = getNeighbors(currentActiveNode);
 
   return (
     <div
@@ -198,7 +221,35 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         </button>
       </div>
 
-      {/* SVG Board */}
+      {/* Movement & Turn Instruction Banner */}
+      {gameState.hasRolledMovement && gameState.movesRemaining > 0 && (
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#1e130b]/90 backdrop-blur-md px-4 py-2 rounded-lg border-2 border-amber-500 shadow-2xl text-amber-200">
+          <Footprints className="w-5 h-5 text-amber-400 animate-pulse" />
+          <div className="text-xs">
+            <span className="font-bold text-white text-sm">
+              {gameState.movesRemaining} Moves Remaining
+            </span>
+            <p className="text-[11px] text-amber-300/80">
+              Click an adjacent circle for 1 step, or click any highlighted space along the road!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Hovered Space Tooltip */}
+      {hoveredNodeId && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#25170f]/95 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#7a5433] text-xs text-amber-200 pointer-events-none shadow-xl flex items-center gap-2">
+          <Compass className="w-4 h-4 text-amber-400" />
+          <span>{getNodeDisplayLabel(hoveredNodeId)}</span>
+          {reachableNodes.includes(hoveredNodeId) && (
+            <span className="text-[10px] bg-emerald-800 text-emerald-100 font-bold px-1.5 py-0.5 rounded ml-1">
+              Reachable
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* SVG Board Container */}
       <div
         className="w-full h-full transition-transform duration-75 origin-top-left"
         style={{
@@ -211,22 +262,28 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           style={{ background: '#eee5cf' }}
         >
           <defs>
-            {/* Board Textures & Filters */}
+            {/* Board Textures & Gradients */}
             <linearGradient id="boardPaper" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#f7f1df" />
               <stop offset="40%" stopColor="#ede2c8" />
               <stop offset="100%" stopColor="#dfd1b0" />
             </linearGradient>
 
+            <linearGradient id="roadSurface" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#8c6a49" />
+              <stop offset="50%" stopColor="#ab8761" />
+              <stop offset="100%" stopColor="#8c6a49" />
+            </linearGradient>
+
             <linearGradient id="miskatonicWater" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.4" />
               <stop offset="50%" stopColor="#0284c7" stopOpacity="0.55" />
-              <stop offset="100%" stopColor="#0369a1" stopOpacity="0.7" />
+              <stop offset="100%" stopColor="#0369a1" stopOpacity="0.75" />
             </linearGradient>
 
             <linearGradient id="portalVortex" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#c084fc" stopOpacity="0.9" />
-              <stop offset="45%" stopColor="#ec4899" stopOpacity="0.75" />
+              <stop offset="45%" stopColor="#ec4899" stopOpacity="0.8" />
               <stop offset="85%" stopColor="#3b82f6" stopOpacity="0.85" />
               <stop offset="100%" stopColor="#1e1b4b" stopOpacity="0.95" />
             </linearGradient>
@@ -236,16 +293,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             </filter>
 
             <filter id="cardShadow" x="-15%" y="-15%" width="130%" height="130%">
-              <feDropShadow dx="1.5" dy="2.5" stdDeviation="1.5" floodColor="#000000" floodOpacity="0.35" />
+              <feDropShadow dx="1.5" dy="2.5" stdDeviation="2" floodColor="#000000" floodOpacity="0.35" />
             </filter>
 
-            <pattern id="brickPattern" width="16" height="8" patternUnits="userSpaceOnUse">
-              <rect width="16" height="8" fill="#a8715a" />
-              <line x1="0" y1="4" x2="16" y2="4" stroke="#784936" strokeWidth="0.8" />
-              <line x1="8" y1="0" x2="8" y2="4" stroke="#784936" strokeWidth="0.8" />
-              <line x1="0" y1="4" x2="0" y2="8" stroke="#784936" strokeWidth="0.8" />
-              <line x1="16" y1="4" x2="16" y2="8" stroke="#784936" strokeWidth="0.8" />
-            </pattern>
+            <filter id="glowGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#10b981" floodOpacity="0.8" />
+            </filter>
           </defs>
 
           {/* Board Background Parchment */}
@@ -254,7 +307,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           <rect x="14" y="14" width="1092" height="952" fill="none" stroke="#8a6341" strokeWidth="1.5" />
 
           {/* ======================================================== */}
-          {/* TOP SECTION: 8 OTHER WORLDS (Authentic 1987 Columns) */}
+          {/* TOP SECTION: 8 OTHER WORLDS */}
           {/* ======================================================== */}
           <g id="other-worlds-section">
             {Object.values(OTHER_WORLDS).map((world, idx) => {
@@ -273,7 +326,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                   className="cursor-pointer group"
                   onClick={() => onOtherWorldClick?.(world.id)}
                 >
-                  {/* Outer World Card */}
                   <rect
                     x={xPos}
                     y={yPos}
@@ -284,8 +336,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     strokeWidth="2.2"
                     rx="3"
                   />
-
-                  {/* Header Title Bar with realm color */}
                   <rect
                     x={xPos}
                     y={yPos}
@@ -306,7 +356,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     {world.name}
                   </text>
 
-                  {/* Printed Encounter Rules Header */}
                   <text
                     x={xPos + 6}
                     y={yPos + 33}
@@ -318,7 +367,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     Roll D6:
                   </text>
 
-                  {/* 6 Printed Encounter Lines */}
                   {Object.entries(world.table).map(([roll, lineText]) => {
                     const rNum = parseInt(roll, 10);
                     const lineY = yPos + 34 + rNum * 11.5;
@@ -337,27 +385,21 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     );
                   })}
 
-                  {/* Bottom Progression Track: START -> [2] -> [1] -> RETURN */}
+                  {/* Progression Track: Box 2 -> Box 1 -> RETURN */}
                   <g transform={`translate(${xPos + 6}, ${yPos + 120})`}>
                     <text x="0" y="2" fontSize="6" fontWeight="bold" fill="#713f12">START</text>
-                    
-                    {/* Box 2 */}
                     <rect x="0" y="6" width="28" height="26" fill="#ffffff" stroke={world.color} strokeWidth="1.5" rx="3" />
                     <text x="14" y="23" textAnchor="middle" fontSize="12" fontWeight="bold" fill={world.color}>2</text>
 
-                    {/* Arrow */}
                     <polygon points="32,19 36,16 36,22" fill="#713f12" />
 
-                    {/* Box 1 */}
                     <rect x="40" y="6" width="28" height="26" fill="#ffffff" stroke={world.color} strokeWidth="1.5" rx="3" />
                     <text x="54" y="23" textAnchor="middle" fontSize="12" fontWeight="bold" fill={world.color}>1</text>
 
-                    {/* Return to Arkham */}
                     <rect x="74" y="6" width="45" height="26" fill="#fef08a" stroke="#ca8a04" strokeWidth="1" rx="3" />
                     <text x="96" y="17" textAnchor="middle" fontSize="6.5" fontWeight="bold" fill="#854d0e">RETURN</text>
                     <text x="96" y="25" textAnchor="middle" fontSize="5.5" fill="#854d0e">TO ARKHAM</text>
 
-                    {/* Investigators Tokens in this Other World */}
                     {investigatorsHere.map(inv => {
                       const box = inv.otherWorldState?.box || 2;
                       const tokenX = box === 2 ? 14 : 54;
@@ -380,28 +422,24 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           {/* LEFT SIDEBAR: DECKS & DOOM TRACK */}
           {/* ======================================================== */}
           <g id="left-column">
-            {/* Spells, Items, Gates Card Slots */}
             <g transform="translate(20, 195)">
-              {/* Spells Slot */}
               <rect x="0" y="0" width="70" height="150" fill="#2e1065" stroke="#7e22ce" strokeWidth="2" rx="4" />
               <text x="35" y="80" textAnchor="middle" fill="#f3e8ff" fontSize="13" fontWeight="bold" fontFamily="serif" transform="rotate(-90 35 80)">
                 SPELLS ({gameState.spellDeck.length})
               </text>
 
-              {/* Items Slot */}
               <rect x="0" y="160" width="70" height="150" fill="#451a03" stroke="#b45309" strokeWidth="2" rx="4" />
               <text x="35" y="240" textAnchor="middle" fill="#fef3c7" fontSize="13" fontWeight="bold" fontFamily="serif" transform="rotate(-90 35 240)">
                 ITEMS ({gameState.itemDeck.length})
               </text>
 
-              {/* Gates Slot */}
               <rect x="0" y="320" width="70" height="150" fill="#064e3b" stroke="#059669" strokeWidth="2" rx="4" />
               <text x="35" y="400" textAnchor="middle" fill="#d1fae5" fontSize="13" fontWeight="bold" fontFamily="serif" transform="rotate(-90 35 400)">
                 GATES ({gameState.openGates.length})
               </text>
             </g>
 
-            {/* The 14-Space Doom Track */}
+            {/* Doom Track */}
             <g transform="translate(100, 195)">
               <rect x="0" y="0" width="60" height="535" fill="#2d1c12" stroke="#8c6441" strokeWidth="2.5" rx="5" />
               <text x="30" y="20" textAnchor="middle" fill="#d4af37" fontSize="10.5" fontWeight="bold" fontFamily="serif">
@@ -411,9 +449,8 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 TRACK
               </text>
 
-              {/* 14 Doom Slots */}
               {Array.from({ length: 14 }).map((_, idx) => {
-                const spaceNum = 14 - idx; // 14 at top (Doom of Arkham), 1 at bottom
+                const spaceNum = 14 - idx;
                 const isDoomOfArkham = spaceNum === 14;
                 const slotY = 40 + idx * 35;
                 const isCurrentDoom = gameState.doomTrack === spaceNum;
@@ -446,7 +483,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                       </text>
                     )}
 
-                    {/* Doom Factor Token */}
                     {isCurrentDoom && (
                       <g transform={`translate(30, ${slotY + 15})`} filter="url(#pawnShadow)">
                         <circle cx="0" cy="0" r="13" fill="#dc2626" stroke="#fbbf24" strokeWidth="2.5" />
@@ -458,7 +494,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
               })}
             </g>
 
-            {/* Bottom-left: Gate Appearance Table (1987 Gazette Table) */}
+            {/* Gate Appearance Table */}
             <g transform="translate(20, 745)">
               <rect x="0" y="0" width="140" height="215" fill="#ede0c5" stroke="#6b4c33" strokeWidth="2" rx="4" />
               <text x="70" y="16" textAnchor="middle" fill="#3b2413" fontSize="8.5" fontWeight="bold" fontFamily="serif">
@@ -488,334 +524,351 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           {/* CENTRAL ARKHAM MAP: NATURAL LANDSCAPE & RIVER */}
           {/* ======================================================== */}
           <g id="landscape">
-            {/* Miskatonic River Flowing East to South Coast */}
+            {/* Winding Miskatonic River */}
             <path
-              d="M 850,390 C 820,440 760,490 730,550 C 690,620 540,680 430,750 C 370,790 350,860 360,920"
+              d="M 850,380 C 820,430 760,490 730,550 C 690,620 540,680 430,750 C 370,790 350,860 360,920"
               fill="none"
               stroke="url(#miskatonicWater)"
-              strokeWidth="42"
+              strokeWidth="48"
               strokeLinecap="round"
             />
-            {/* River Ripples */}
             <path
-              d="M 845,395 C 815,445 755,495 725,555 C 685,625 535,685 425,755 C 365,795 345,865 355,920"
+              d="M 845,385 C 815,435 755,495 725,555 C 685,625 535,685 425,755 C 365,795 345,865 355,920"
               fill="none"
               stroke="#e0f2fe"
-              strokeWidth="2"
+              strokeWidth="2.5"
               strokeDasharray="6,12"
             />
 
-            {/* Rolling Hills & Greenery Groves */}
-            <ellipse cx="480" cy="440" rx="60" ry="30" fill="#166534" opacity="0.12" />
-            <ellipse cx="800" cy="410" rx="75" ry="40" fill="#166534" opacity="0.15" />
-            <ellipse cx="330" cy="560" rx="50" ry="25" fill="#166534" opacity="0.1" />
-            <ellipse cx="730" cy="720" rx="55" ry="25" fill="#166534" opacity="0.1" />
+            {/* Woods, Hills & Park Groves */}
+            <ellipse cx="485" cy="440" rx="75" ry="35" fill="#15803d" opacity="0.14" />
+            <ellipse cx="805" cy="410" rx="85" ry="45" fill="#15803d" opacity="0.15" />
+            <ellipse cx="320" cy="570" rx="60" ry="30" fill="#15803d" opacity="0.12" />
+            <ellipse cx="740" cy="720" rx="65" ry="30" fill="#15803d" opacity="0.12" />
+
+            {/* River Bridge markings */}
+            <rect x="520" y="685" width="28" height="12" fill="#5c381c" stroke="#2c1708" strokeWidth="1" rx="2" transform="rotate(-35 534 691)" />
+            <rect x="715" y="525" width="30" height="12" fill="#5c381c" stroke="#2c1708" strokeWidth="1" rx="2" transform="rotate(35 730 531)" />
           </g>
 
           {/* ======================================================== */}
-          {/* STREET NETWORK (Paths, Intersections & Nodes) */}
+          {/* STREET ROADS WITH REAL BOARD GAME STREET WIDTH */}
+          {/* Authentic wide roadway with curb borders and cobblestones */}
           {/* ======================================================== */}
-          <g id="street-paths">
-            {/* Thick Cobblestone Base */}
-            {Object.values(STREET_NODES).map(node => {
-              return node.connectedTo.map(neighborId => {
-                const neighbor = STREET_NODES[neighborId];
-                if (!neighbor || neighbor.id < node.id) return null;
-                return (
-                  <line
-                    key={`base-${node.id}-${neighbor.id}`}
-                    x1={node.x}
-                    y1={node.y}
-                    x2={neighbor.x}
-                    y2={neighbor.y}
-                    stroke="#8c6a49"
-                    strokeWidth="8"
-                    strokeLinecap="round"
-                  />
-                );
-              });
-            })}
-            {/* Inner Street Fill */}
-            {Object.values(STREET_NODES).map(node => {
-              return node.connectedTo.map(neighborId => {
-                const neighbor = STREET_NODES[neighborId];
-                if (!neighbor || neighbor.id < node.id) return null;
-                return (
-                  <line
-                    key={`inner-${node.id}-${neighbor.id}`}
-                    x1={node.x}
-                    y1={node.y}
-                    x2={neighbor.x}
-                    y2={neighbor.y}
-                    stroke="#f5eee1"
-                    strokeWidth="4"
-                    strokeLinecap="round"
-                  />
-                );
-              });
-            })}
-          </g>
-
-          {/* Location Pointer Arrows */}
-          <g id="location-pointers">
-            {Object.values(LOCATIONS_DATA).map(loc => {
-              const streetNode = STREET_NODES[loc.pointerNodeId];
-              if (!streetNode) return null;
+          <g id="street-edges">
+            {/* Outer Road Base (Curb & Bed) */}
+            {BOARD_RAW_EDGES.map(([a, b]) => {
+              const nodeA = BOARD_NODES[a];
+              const nodeB = BOARD_NODES[b];
+              if (!nodeA || !nodeB) return null;
 
               return (
-                <g key={`ptr-${loc.id}`}>
-                  <line
-                    x1={streetNode.x}
-                    y1={streetNode.y}
-                    x2={loc.x}
-                    y2={loc.y}
-                    stroke="#b45309"
-                    strokeWidth="3.5"
-                    strokeDasharray="4,4"
-                  />
-                  <circle cx={loc.x} cy={loc.y} r="4" fill="#b45309" />
-                </g>
+                <line
+                  key={`edge-base-${a}-${b}`}
+                  x1={nodeA.x}
+                  y1={nodeA.y}
+                  x2={nodeB.x}
+                  y2={nodeB.y}
+                  stroke="#5a3d24"
+                  strokeWidth="22"
+                  strokeLinecap="round"
+                />
               );
             })}
-          </g>
 
-          {/* ======================================================== */}
-          {/* 24 ARKHAM BUILDINGS / LOCATIONS */}
-          {/* ======================================================== */}
-          <g id="buildings">
-            {Object.values(LOCATIONS_DATA).map(loc => {
-              const gate = getGateAtLocation(loc.id);
-              const investigatorsHere = gameState.investigators.filter(
-                inv => inv.locationNodeId === loc.id && !inv.otherWorldState
-              );
-              const monstersHere = gameState.activeMonsters.filter(
-                m => m.currentNodeId === loc.id
-              );
+            {/* Inner Cobblestone Street Surface */}
+            {BOARD_RAW_EDGES.map(([a, b]) => {
+              const nodeA = BOARD_NODES[a];
+              const nodeB = BOARD_NODES[b];
+              if (!nodeA || !nodeB) return null;
 
               return (
-                <g
-                  key={loc.id}
-                  className="cursor-pointer group"
-                  onClick={() => onLocationClick(loc.id)}
-                >
-                  {/* Building Shadow */}
-                  <rect
-                    x={loc.x - 42}
-                    y={loc.y - 32}
-                    width="84"
-                    height="64"
-                    fill="#332214"
-                    opacity="0.3"
-                    rx="6"
-                    transform="translate(2.5, 3.5)"
-                  />
-                  {/* Building Base Card */}
-                  <rect
-                    x={loc.x - 42}
-                    y={loc.y - 32}
-                    width="84"
-                    height="64"
-                    fill="#faf6ee"
-                    stroke="#5a3d25"
-                    strokeWidth="2"
-                    rx="6"
-                    className="group-hover:stroke-amber-600 transition"
-                  />
+                <line
+                  key={`edge-surface-${a}-${b}`}
+                  x1={nodeA.x}
+                  y1={nodeA.y}
+                  x2={nodeB.x}
+                  y2={nodeB.y}
+                  stroke="#dfd0b5"
+                  strokeWidth="16"
+                  strokeLinecap="round"
+                />
+              );
+            })}
 
-                  {/* Header Title Bar */}
-                  <rect
-                    x={loc.x - 42}
-                    y={loc.y - 32}
-                    width="84"
-                    height="20"
-                    fill="#4a311d"
-                    rx="5"
-                  />
-                  <text
-                    x={loc.x}
-                    y={loc.y - 18}
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize="7.8"
-                    fontWeight="bold"
-                    fontFamily="serif"
-                  >
-                    {loc.name.length > 15 ? loc.name.substring(0, 14) + '..' : loc.name}
-                  </text>
+            {/* Subtle Street Center Line */}
+            {BOARD_RAW_EDGES.map(([a, b]) => {
+              const nodeA = BOARD_NODES[a];
+              const nodeB = BOARD_NODES[b];
+              if (!nodeA || !nodeB) return null;
 
-                  {/* Building Visual Architectural Glyph */}
-                  <g transform={`translate(${loc.x - 12}, ${loc.y - 6})`}>
-                    {loc.id === 'train_station' && (
-                      <path d="M 4,14 L 20,14 L 20,4 L 4,4 Z M 8,2 L 16,2 L 16,0 L 8,0 Z" fill="#b91c1c" />
-                    )}
-                    {loc.id === 'north_church' && (
-                      <path d="M 12,0 L 14,5 L 14,14 L 10,14 L 10,5 Z" fill="#64748b" />
-                    )}
-                    {loc.id === 'black_cave' && (
-                      <path d="M 2,14 Q 12,2 22,14 Z" fill="#1e293b" />
-                    )}
-                    {loc.id === 'lighthouse' && (
-                      <path d="M 9,14 L 15,14 L 13,2 L 11,2 Z" fill="#e11d48" />
-                    )}
-                    {loc.id === 'graveyard' && (
-                      <path d="M 6,14 L 6,6 L 12,6 L 12,14 Z M 16,14 L 16,8 L 20,8 L 20,14 Z" fill="#475569" />
-                    )}
-                    {loc.id === 'darks_carnival' && (
-                      <polygon points="4,14 12,2 20,14" fill="#ea580c" />
-                    )}
-                    {loc.id === 'curiositie_shoppe' && (
-                      <path d="M 4,14 L 20,14 L 18,6 L 6,6 Z" fill="#ca8a04" />
-                    )}
-                    {/* Default building icon */}
-                    {['train_station', 'north_church', 'black_cave', 'lighthouse', 'graveyard', 'darks_carnival', 'curiositie_shoppe'].indexOf(loc.id) === -1 && (
-                      <path d="M 4,14 L 20,14 L 20,6 L 12,1 L 4,6 Z" fill="#784936" />
-                    )}
-                  </g>
-
-                  {/* D6 Encounter tag */}
-                  <text
-                    x={loc.x}
-                    y={loc.y + 24}
-                    textAnchor="middle"
-                    fill="#78563a"
-                    fontSize="7"
-                    fontStyle="italic"
-                  >
-                    D6 Encounter
-                  </text>
-
-                  {/* Swirling Dimensional Gate Overlay */}
-                  {gate && (
-                    <g transform={`translate(${loc.x}, ${loc.y + 6})`}>
-                      <circle cx="0" cy="0" r="22" fill="url(#portalVortex)" filter="url(#pawnShadow)" />
-                      <circle cx="0" cy="0" r="16" fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4,4" />
-                      <text x="0" y="3" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
-                        GATE
-                      </text>
-                    </g>
-                  )}
-
-                  {/* Investigators Present */}
-                  {investigatorsHere.map((inv, idx) => {
-                    const offset = (idx - (investigatorsHere.length - 1) / 2) * 15;
-                    return (
-                      <g key={inv.id} transform={`translate(${loc.x + offset}, ${loc.y + 14})`} filter="url(#pawnShadow)">
-                        <circle cx="0" cy="0" r="9" fill={colorHexMap[inv.color] || '#333'} stroke="#ffffff" strokeWidth="2.5" />
-                        <text x="0" y="3.5" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
-                          {inv.name[0]}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {/* Monsters Present */}
-                  {monstersHere.map((m, idx) => {
-                    const mOffset = (idx - (monstersHere.length - 1) / 2) * 14;
-                    return (
-                      <g key={m.id} transform={`translate(${loc.x + mOffset - 10}, ${loc.y - 12})`} filter="url(#cardShadow)">
-                        <rect x="0" y="0" width="20" height="20" fill="#991b1b" stroke="#fde047" strokeWidth="1.5" rx="3" />
-                        <text x="10" y="14" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
-                          {m.strength}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
+              return (
+                <line
+                  key={`edge-dashed-${a}-${b}`}
+                  x1={nodeA.x}
+                  y1={nodeA.y}
+                  x2={nodeB.x}
+                  y2={nodeB.y}
+                  stroke="#b39b7d"
+                  strokeWidth="1.2"
+                  strokeDasharray="4,6"
+                  strokeLinecap="round"
+                />
               );
             })}
           </g>
 
           {/* ======================================================== */}
-          {/* STREET NODES & TAXI STANDS */}
+          {/* STREET LABELS PRINTED ALONG ROADS */}
           {/* ======================================================== */}
-          <g id="street-nodes">
-            {Object.values(STREET_NODES).map(node => {
+          <g id="street-names" fontSize="7.5" fill="#5c3e27" fontWeight="bold" fontFamily="serif" letterSpacing="1.5">
+            <text x="640" y="318" textAnchor="middle">NORTH STREET</text>
+            <text x="215" y="525" textAnchor="middle" transform="rotate(-90 215 525)">WEST STREET</text>
+            <text x="440" y="638" textAnchor="middle">ASYLUM STREET</text>
+            <text x="670" y="438" textAnchor="middle">CHURCH STREET</text>
+            <text x="560" y="852" textAnchor="middle">SOUTH SHORE ROAD</text>
+            <text x="790" y="830" textAnchor="middle">HARBOR ROAD</text>
+            <text x="635" y="520" textAnchor="middle">MARKET SQUARE</text>
+            <text x="800" y="650" textAnchor="middle">TAVERN ROAD</text>
+          </g>
+
+          {/* ======================================================== */}
+          {/* ALL BOARD NODES: EMPTY STREET SPACES, LOCATIONS & TAXIS */}
+          {/* ======================================================== */}
+          <g id="board-nodes">
+            {Object.values(BOARD_NODES).map(node => {
               const isReachable = reachableNodes.includes(node.id);
+              const isAdjacent = directStepNeighbors.includes(node.id);
+              const isHovered = hoveredNodeId === node.id;
               const investigatorsHere = getInvestigatorsAtNode(node.id);
               const monstersHere = getMonstersAtNode(node.id);
 
-              if (node.isTaxiStand) {
-                // Yellow Circular Taxi Stand
+              // 1. TAXI STANDS (West, South, East)
+              if (node.type === 'transport') {
                 return (
                   <g
                     key={node.id}
                     className="cursor-pointer group"
                     onClick={() => { onNodeClick(node.id); sound.playStep(); }}
+                    onMouseEnter={() => setHoveredNodeId(node.id)}
+                    onMouseLeave={() => setHoveredNodeId(null)}
                     transform={`translate(${node.x}, ${node.y})`}
                   >
-                    <circle cx="0" cy="0" r="24" fill="#eab308" stroke="#854d0e" strokeWidth="3.5" filter="url(#pawnShadow)" />
-                    <circle cx="0" cy="0" r="17" fill="#ca8a04" />
-                    <text x="0" y="4" textAnchor="middle" fill="#ffffff" fontSize="9.5" fontWeight="bold" fontFamily="sans-serif">
+                    <circle cx="0" cy="0" r="23" fill="#eab308" stroke="#854d0e" strokeWidth="3" filter="url(#pawnShadow)" />
+                    <circle cx="0" cy="0" r="16" fill="#ca8a04" />
+                    <text x="0" y="4" textAnchor="middle" fill="#ffffff" fontSize="9" fontWeight="bold" fontFamily="sans-serif">
                       TAXI
                     </text>
 
+                    {/* Reachable Ring */}
                     {isReachable && (
-                      <circle cx="0" cy="0" r="30" fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="4,4" className="animate-spin" />
+                      <circle cx="0" cy="0" r="27" fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="4,4" className="animate-spin" />
                     )}
+
+                    {/* Plastic Pawns */}
+                    {investigatorsHere.map((inv, idx) => (
+                      <PawnFigure
+                        key={inv.id}
+                        color={inv.color}
+                        initial={inv.name[0]}
+                        isActive={inv.id === activeInvestigator?.id}
+                        offsetIndex={idx}
+                        totalOnSpace={investigatorsHere.length}
+                        colorHexMap={colorHexMap}
+                      />
+                    ))}
                   </g>
                 );
               }
 
-              // Standard Street Circle
+              // 2. LOCATIONS (Named Buildings with D6 Gazette Encounters)
+              if (node.type === 'location') {
+                const locId = node.locationId;
+                const gate = locId ? getGateAtLocation(locId) : undefined;
+                const locData = locId ? LOCATIONS_DATA[locId] : undefined;
+
+                return (
+                  <g
+                    key={node.id}
+                    className="cursor-pointer group"
+                    onClick={() => {
+                      if (isReachable) onNodeClick(node.id);
+                      else if (locId) onLocationClick(locId);
+                      sound.playStep();
+                    }}
+                    onMouseEnter={() => setHoveredNodeId(node.id)}
+                    onMouseLeave={() => setHoveredNodeId(null)}
+                    transform={`translate(${node.x}, ${node.y})`}
+                  >
+                    {/* Entrance Walkway to Road */}
+                    <circle cx="0" cy="0" r="13" fill="#ffffff" stroke="#5a3d24" strokeWidth="2" filter="url(#pawnShadow)" />
+                    <circle cx="0" cy="0" r="10" fill="none" stroke="#cbb292" strokeWidth="1" strokeDasharray="2,2" />
+
+                    {/* Location Building Box */}
+                    <g transform="translate(0, -32)">
+                      <rect
+                        x="-38"
+                        y="-16"
+                        width="76"
+                        height="44"
+                        fill="#faf6ee"
+                        stroke={isReachable ? '#059669' : '#5a3d25'}
+                        strokeWidth={isReachable ? '3.5' : '2'}
+                        rx="5"
+                        filter="url(#cardShadow)"
+                        className="group-hover:stroke-amber-600 transition"
+                      />
+
+                      {/* Header Roof Banner */}
+                      <rect x="-38" y="-16" width="76" height="16" fill="#4a311d" rx="4" />
+                      <text
+                        x="0"
+                        y="-5"
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="7"
+                        fontWeight="bold"
+                        fontFamily="serif"
+                      >
+                        {node.label && node.label.length > 15 ? node.label.substring(0, 14) + '..' : node.label}
+                      </text>
+
+                      {/* Gazette Encounter Hint */}
+                      <text x="0" y="21" textAnchor="middle" fill="#78563a" fontSize="6.2" fontStyle="italic">
+                        D6 Encounter
+                      </text>
+
+                      {/* Dimensional Vortex Gate Overlay */}
+                      {gate && (
+                        <g transform="translate(0, 7)">
+                          <circle cx="0" cy="0" r="15" fill="url(#portalVortex)" filter="url(#pawnShadow)" />
+                          <circle cx="0" cy="0" r="11" fill="none" stroke="#f472b6" strokeWidth="1.5" strokeDasharray="3,3" />
+                          <text x="0" y="2.5" textAnchor="middle" fill="#ffffff" fontSize="6" fontWeight="bold">
+                            GATE
+                          </text>
+                        </g>
+                      )}
+                    </g>
+
+                    {/* Reachable Pulse Ring */}
+                    {isReachable && (
+                      <circle cx="0" cy="0" r="18" fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="3,3" className="animate-spin" />
+                    )}
+
+                    {/* Step 1 badge if direct neighbor */}
+                    {isAdjacent && gameState.movesRemaining > 0 && (
+                      <g transform="translate(11, -11)">
+                        <circle cx="0" cy="0" r="6" fill="#059669" stroke="#ffffff" strokeWidth="1" />
+                        <text x="0" y="2" textAnchor="middle" fill="#ffffff" fontSize="6" fontWeight="bold">1</text>
+                      </g>
+                    )}
+
+                    {/* Plastic Pawns */}
+                    {investigatorsHere.map((inv, idx) => (
+                      <PawnFigure
+                        key={inv.id}
+                        color={inv.color}
+                        initial={inv.name[0]}
+                        isActive={inv.id === activeInvestigator?.id}
+                        offsetIndex={idx}
+                        totalOnSpace={investigatorsHere.length}
+                        colorHexMap={colorHexMap}
+                      />
+                    ))}
+
+                    {/* Monsters */}
+                    {monstersHere.map((m, idx) => (
+                      <g key={m.id} transform={`translate(${(idx - (monstersHere.length - 1) / 2) * 20}, -55)`} filter="url(#cardShadow)">
+                        <rect x="-10" y="-10" width="20" height="20" fill="#7f1d1d" stroke="#fde047" strokeWidth="1.5" rx="2" />
+                        <text x="0" y="5" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
+                          {m.strength}
+                        </text>
+                      </g>
+                    ))}
+                  </g>
+                );
+              }
+
+              // 3. AUTHENTIC EMPTY STREET SPACES (White Circles for Plastic Pieces)
+              // This is the core board game stepping mechanic the user emphasized!
               return (
                 <g
                   key={node.id}
                   className="cursor-pointer group"
                   onClick={() => { onNodeClick(node.id); sound.playStep(); }}
+                  onMouseEnter={() => setHoveredNodeId(node.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
                   transform={`translate(${node.x}, ${node.y})`}
                 >
+                  {/* Outer Embossed Stepping Rim */}
                   <circle
                     cx="0"
                     cy="0"
-                    r="12"
+                    r={node.type === 'junction' ? 14 : 12.5}
                     fill={isReachable ? '#ecfdf5' : '#ffffff'}
-                    stroke={isReachable ? '#059669' : '#6b4f35'}
+                    stroke={isReachable ? '#059669' : '#3d2817'}
                     strokeWidth={isReachable ? '3.5' : '2'}
                     filter="url(#pawnShadow)"
+                    className="group-hover:stroke-amber-600 transition"
                   />
+
+                  {/* Inner Concentric Vintage Boardgame Ring */}
+                  <circle
+                    cx="0"
+                    cy="0"
+                    r={node.type === 'junction' ? 10.5 : 9}
+                    fill="none"
+                    stroke={isReachable ? '#10b981' : '#cbb292'}
+                    strokeWidth="1"
+                    strokeDasharray={isReachable ? undefined : '2,2'}
+                  />
+
+                  {/* Reachable Green Center Dot */}
                   {isReachable && (
-                    <circle cx="0" cy="0" r="5" fill="#10b981" />
+                    <circle cx="0" cy="0" r="4.5" fill="#10b981" />
                   )}
 
-                  {/* Investigators on this street node */}
-                  {investigatorsHere.map((inv, idx) => {
-                    const offset = (idx - (investigatorsHere.length - 1) / 2) * 14;
-                    return (
-                      <g key={inv.id} transform={`translate(${offset}, 0)`} filter="url(#pawnShadow)">
-                        <circle cx="0" cy="0" r="10" fill={colorHexMap[inv.color] || '#333'} stroke="#ffffff" strokeWidth="2.5" />
-                        <text x="0" y="3.5" textAnchor="middle" fill="#ffffff" fontSize="8.5" fontWeight="bold">
-                          {inv.name[0]}
-                        </text>
-                      </g>
-                    );
-                  })}
+                  {/* Direct 1-Step Neighbor Badge */}
+                  {isAdjacent && gameState.movesRemaining > 0 && (
+                    <g transform="translate(10, -10)">
+                      <circle cx="0" cy="0" r="5.5" fill="#059669" stroke="#ffffff" strokeWidth="1" />
+                      <text x="0" y="2" textAnchor="middle" fill="#ffffff" fontSize="5.5" fontWeight="bold">1</text>
+                    </g>
+                  )}
 
-                  {/* Monsters on this street node (Authentic 1987 Cardboard Counter) */}
-                  {monstersHere.map((m, idx) => {
-                    const offset = (idx - (monstersHere.length - 1) / 2) * 16;
-                    return (
-                      <g key={m.id} transform={`translate(${offset}, -22)`} filter="url(#cardShadow)">
-                        {/* 1987 Cardboard Monster Counter */}
-                        <rect x="-12" y="-12" width="24" height="24" fill="#7f1d1d" stroke="#fde047" strokeWidth="1.8" rx="3" />
-                        {/* Direction Arrow */}
-                        <polygon
-                          points="0,-10 5,-2 -5,-2"
-                          fill="#fef08a"
-                          transform={m.handedness === 'L' ? 'rotate(-45)' : 'rotate(45)'}
-                        />
-                        {/* Strength SP */}
-                        <text x="0" y="8" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
-                          {m.strength}
-                        </text>
-                      </g>
-                    );
-                  })}
+                  {/* Plastic Pawns Resting on Empty Space */}
+                  {investigatorsHere.map((inv, idx) => (
+                    <PawnFigure
+                      key={inv.id}
+                      color={inv.color}
+                      initial={inv.name[0]}
+                      isActive={inv.id === activeInvestigator?.id}
+                      offsetIndex={idx}
+                      totalOnSpace={investigatorsHere.length}
+                      colorHexMap={colorHexMap}
+                    />
+                  ))}
+
+                  {/* Monsters on this Space */}
+                  {monstersHere.map((m, idx) => (
+                    <g key={m.id} transform={`translate(${(idx - (monstersHere.length - 1) / 2) * 18}, -20)`} filter="url(#cardShadow)">
+                      <rect x="-10" y="-10" width="20" height="20" fill="#7f1d1d" stroke="#fde047" strokeWidth="1.5" rx="2" />
+                      <polygon
+                        points="0,-7 3.5,-1 -3.5,-1"
+                        fill="#fef08a"
+                        transform={m.handedness === 'L' ? 'rotate(-45)' : 'rotate(45)'}
+                      />
+                      <text x="0" y="6" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
+                        {m.strength}
+                      </text>
+                    </g>
+                  ))}
                 </g>
               );
             })}
           </g>
 
-          {/* Welcome to Arkham Billboard Sign */}
+          {/* Welcome to Arkham Vintage Signboard */}
           <g transform="translate(195, 310) rotate(-12)" filter="url(#pawnShadow)">
             <rect x="0" y="0" width="90" height="36" fill="#fde68a" stroke="#854d0e" strokeWidth="2" rx="4" />
             <text x="45" y="16" textAnchor="middle" fill="#78350f" fontSize="9.5" fontWeight="bold" fontFamily="serif">
@@ -826,7 +879,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             </text>
           </g>
 
-          {/* Bottom Title Trademark Banner */}
+          {/* Bottom Title & Trademark */}
           <g transform="translate(200, 955)">
             <text x="0" y="0" fill="#2d1c10" fontSize="18" fontWeight="bold" fontFamily="serif" letterSpacing="2">
               ARKHAM HORROR
@@ -838,5 +891,94 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         </svg>
       </div>
     </div>
+  );
+};
+
+// =========================================================================
+// 3D PLASTIC PAWN COMPONENT (Authentic Board Game Figurine)
+// =========================================================================
+interface PawnFigureProps {
+  color: string;
+  initial: string;
+  isActive: boolean;
+  offsetIndex: number;
+  totalOnSpace: number;
+  colorHexMap: Record<string, string>;
+}
+
+const PawnFigure: React.FC<PawnFigureProps> = ({
+  color,
+  initial,
+  isActive,
+  offsetIndex,
+  totalOnSpace,
+  colorHexMap
+}) => {
+  const pawnColor = colorHexMap[color] || '#333';
+  const offsetX = (offsetIndex - (totalOnSpace - 1) / 2) * 16;
+
+  return (
+    <g transform={`translate(${offsetX}, -2)`} filter="url(#pawnShadow)" className="transition-all duration-200">
+      {/* Active Investigator Aura Beacon */}
+      {isActive && (
+        <g>
+          <ellipse cx="0" cy="10" rx="10" ry="4" fill="none" stroke="#fbbf24" strokeWidth="2" strokeDasharray="3,3" className="animate-spin" />
+          <polygon points="0,-19 -4,-25 4,-25" fill="#f59e0b" className="animate-bounce" />
+        </g>
+      )}
+
+      {/* Pawn Drop Shadow */}
+      <ellipse cx="0" cy="10" rx="9" ry="3.5" fill="#000000" opacity="0.5" />
+
+      {/* Flared Circular Base */}
+      <ellipse cx="0" cy="8" rx="7.5" ry="2.5" fill={pawnColor} stroke="#ffffff" strokeWidth="0.8" />
+      <path
+        d="M -7.5,8 C -7.5,6 7.5,6 7.5,8 C 7.5,10 -7.5,10 -7.5,8 Z"
+        fill={pawnColor}
+      />
+
+      {/* Tapered Conical Waist */}
+      <path
+        d="M -5.5,7 C -2.5,0 -2,-3.5 -1.5,-5 L 1.5,-5 C 2,-3.5 2.5,0 5.5,7 Z"
+        fill={pawnColor}
+      />
+
+      {/* Glossy Plastic Specular Waist Reflection */}
+      <path
+        d="M -3,6 C -1,0 -0.8,-3 -0.5,-4.5 L 0.2,-4.5 C -0.2,-3 -0.5,0 -1.8,6 Z"
+        fill="#ffffff"
+        opacity="0.4"
+      />
+
+      {/* Neck Collar */}
+      <ellipse cx="0" cy="-5" rx="3.2" ry="1.2" fill={pawnColor} stroke="#ffffff" strokeWidth="0.5" />
+
+      {/* Glossy Spherical Head */}
+      <circle cx="0" cy="-10.5" r="5" fill={pawnColor} />
+
+      {/* Specular Highlight on Head */}
+      <ellipse
+        cx="-1.6"
+        cy="-12"
+        rx="1.8"
+        ry="1"
+        fill="#ffffff"
+        opacity="0.8"
+        transform="rotate(-25 -1.6 -12)"
+      />
+
+      {/* Investigator Initial Monogram */}
+      <text
+        x="0"
+        y="3"
+        textAnchor="middle"
+        fill="#ffffff"
+        fontSize="6"
+        fontWeight="bold"
+        fontFamily="sans-serif"
+      >
+        {initial}
+      </text>
+    </g>
   );
 };

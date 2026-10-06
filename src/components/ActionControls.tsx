@@ -1,7 +1,8 @@
 import React from 'react';
 import { GameState, TurnPhase } from '../types/game';
-import { Dices, Car, Skull, Footprints, BookOpen, Sword, CheckCircle, ArrowRight, ShieldAlert } from 'lucide-react';
-import { LOCATIONS_DATA, STREET_NODES } from '../data/rules1987';
+import { Dices, Car, Skull, Footprints, BookOpen, Sword, CheckCircle, ArrowRight, ShieldAlert, Sparkles } from 'lucide-react';
+import { LOCATIONS_DATA } from '../data/rules1987';
+import { getLocationIdForNode, getNodeDisplayLabel } from '../data/boardGraph';
 
 interface ActionControlsProps {
   gameState: GameState;
@@ -35,8 +36,11 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
     m => m.currentNodeId === activeInv?.locationNodeId
   );
 
-  // Check if at a location
-  const isAtLocation = LOCATIONS_DATA[activeInv?.locationNodeId] !== undefined;
+  // Check if at a location using locationId mapping
+  const activeNodeId = activeInv?.locationNodeId || '';
+  const locId = getLocationIdForNode(activeNodeId);
+  const isAtLocation = locId !== undefined && LOCATIONS_DATA[locId] !== undefined;
+  const currentDisplayName = locId ? LOCATIONS_DATA[locId]?.name : getNodeDisplayLabel(activeNodeId);
 
   return (
     <div className="bg-[#241a12] text-[#f5ecd8] border-2 border-[#8c6b45] rounded-xl p-4 shadow-xl">
@@ -65,7 +69,7 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
             <p className="text-xs text-[#b89f82]">
               {isMythosPhase
                 ? 'Ancient cosmic powers stir across Arkham...'
-                : `Currently at: ${LOCATIONS_DATA[activeInv?.locationNodeId]?.name || STREET_NODES[activeInv?.locationNodeId]?.name || activeInv?.locationNodeId}`}
+                : `Currently at: ${currentDisplayName}`}
             </p>
           </div>
         </div>
@@ -80,7 +84,7 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
             {gameState.movesRemaining > 0 && (
               <button
                 onClick={onEndMovementEarly}
-                className="ml-2 text-[10px] bg-[#5a3818] hover:bg-[#784c20] text-amber-200 px-2 py-0.5 rounded transition"
+                className="ml-2 text-[10px] bg-[#5a3818] hover:bg-[#784c20] text-amber-200 px-2 py-0.5 rounded transition font-bold"
               >
                 Stop Here
               </button>
@@ -96,9 +100,9 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
           <>
             <button
               onClick={onRollMovement}
-              className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-bold px-4 py-2 rounded-lg shadow-md transition transform active:scale-95"
+              className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-serif font-bold px-4 py-2 rounded-lg shadow-md transition transform active:scale-95"
             >
-              <Dices className="w-5 h-5" /> Roll Movement (2D6)
+              <Dices className="w-5 h-5 text-amber-200" /> Roll Movement (2D6)
             </button>
 
             <button
@@ -136,28 +140,28 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
             ) : isAtLocation ? (
               <button
                 onClick={onDrawEncounter}
-                className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg shadow-md transition"
+                className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white font-serif font-bold px-4 py-2 rounded-lg shadow-md transition transform active:scale-95"
               >
-                <BookOpen className="w-5 h-5" /> Draw Location Encounter (D6)
+                <BookOpen className="w-5 h-5" /> Draw Location Encounter (D6) at {LOCATIONS_DATA[locId]?.name}
               </button>
             ) : (
               <button
                 onClick={onEndInvestigatorTurn}
                 className="flex items-center gap-2 bg-[#4a3420] hover:bg-[#5c4129] text-amber-200 px-4 py-2 rounded-lg font-semibold transition"
               >
-                <CheckCircle className="w-4 h-4" /> Empty Street — End Turn
+                <CheckCircle className="w-4 h-4 text-emerald-400" /> Empty Street Space — End Turn
               </button>
             )}
           </>
         )}
 
-        {/* Monster in space check at any phase */}
+        {/* Monster Ambush check at any phase */}
         {!isMythosPhase && monstersInSameNode.length > 0 && currentPhase !== 'INVESTIGATOR_ENCOUNTER' && (
           <button
             onClick={onTriggerCombat}
             className="flex items-center gap-2 bg-red-800 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-lg shadow-md animate-bounce transition"
           >
-            <ShieldAlert className="w-4 h-4" /> Monster Ambush: {monstersInSameNode[0].name}!
+            <ShieldAlert className="w-5 h-5" /> Monster Ambush: {monstersInSameNode[0].name}!
           </button>
         )}
 
@@ -175,7 +179,7 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
           </button>
         )}
 
-        {/* End turn button when encounter or actions resolved */}
+        {/* Pass / Next button when encounter or actions resolved */}
         {!isMythosPhase && gameState.hasTakenActionThisTurn && currentPhase !== 'INVESTIGATOR_COMBAT' && (
           <button
             onClick={onEndInvestigatorTurn}
@@ -186,9 +190,22 @@ export const ActionControls: React.FC<ActionControlsProps> = ({
         )}
       </div>
 
+      {/* Movement instruction hint if rolled */}
+      {!isMythosPhase && gameState.hasRolledMovement && gameState.movesRemaining > 0 && (
+        <div className="mt-3 bg-[#18110b] p-2.5 rounded border border-[#5a3f28] flex items-center justify-between text-xs text-amber-200">
+          <span className="flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <strong>Moving:</strong> Click an adjacent white circle (marked with '1') or any highlighted space on the road.
+          </span>
+          <span className="text-amber-300 font-bold bg-[#3e2715] px-2 py-0.5 rounded border border-[#7a5433]">
+            {gameState.movesRemaining} spaces left
+          </span>
+        </div>
+      )}
+
       {/* Dice roll readout banner if available */}
       {gameState.lastDiceRoll && (
-        <div className="mt-3 bg-[#18110b] p-2 rounded border border-[#5a3f28] flex items-center justify-between text-xs text-amber-200">
+        <div className="mt-2.5 bg-[#18110b] p-2 rounded border border-[#5a3f28] flex items-center justify-between text-xs text-amber-200">
           <span className="flex items-center gap-1.5">
             <Dices className="w-4 h-4 text-amber-400" />
             <strong className="text-amber-300">{gameState.lastDiceRoll.type}:</strong>{' '}

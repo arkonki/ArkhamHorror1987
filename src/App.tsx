@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   GameState,
   Investigator,
@@ -17,12 +17,20 @@ import {
 import {
   LOCATIONS_DATA,
   OTHER_WORLDS,
-  STREET_NODES,
   GATE_APPEARANCE_TABLE
 } from './data/rules1987';
+import {
+  BOARD_NODES,
+  findShortestPath,
+  getLocationIdForNode,
+  getNodeForLocation,
+  getNodeDisplayLabel,
+  getNeighbors
+} from './data/boardGraph';
 import { GameBoard } from './components/GameBoard';
 import { InvestigatorSheet } from './components/InvestigatorSheet';
 import { ActionControls } from './components/ActionControls';
+import { DiceRoller } from './components/DiceRoller';
 import { CombatModal } from './components/CombatModal';
 import { EncounterModal } from './components/EncounterModal';
 import { GateModal } from './components/GateModal';
@@ -43,7 +51,8 @@ import {
   Trophy,
   Users,
   Volume2,
-  VolumeX
+  VolumeX,
+  Footprints
 } from 'lucide-react';
 import { sound } from './utils/audio';
 
@@ -51,12 +60,28 @@ export default function App() {
   const [gameState, setGameState] = useState<GameState>(() => initializeGame());
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [reachableNodes, setReachableNodes] = useState<string[]>([]);
+  const [adjacentNodes, setAdjacentNodes] = useState<string[]>([]);
   const [selectedInvestigatorIdx, setSelectedInvestigatorIdx] = useState<number>(0);
+  const [isMovingAnimation, setIsMovingAnimation] = useState<boolean>(false);
+  const [movingPawn, setMovingPawn] = useState<{
+    investigatorId: string;
+    currentNodeId: string;
+  } | null>(null);
 
   // Modals state
   const [isNewGameOpen, setIsNewGameOpen] = useState(false);
   const [isRulesOpen, setIsRulesOpen] = useState(false);
   const [isTaxiOpen, setIsTaxiOpen] = useState(false);
+  const [isDiceRollerOpen, setIsDiceRollerOpen] = useState(false);
+  const [diceRollerData, setDiceRollerData] = useState<{
+    dice: [number, number];
+    title: string;
+    description: string;
+  }>({
+    dice: [1, 1],
+    title: 'Dice Roll',
+    description: ''
+  });
   const [inspectWorldId, setInspectWorldId] = useState<OtherWorldId | null>(null);
   const [activeGateModal, setActiveGateModal] = useState<Gate | null>(null);
   const [activeCombatMonster, setActiveCombatMonster] = useState<Monster | null>(null);
@@ -163,8 +188,10 @@ export default function App() {
         gameState.activeMonsters
       );
       setReachableNodes(nodes);
+      setAdjacentNodes(getNeighbors(activeInvestigator.locationNodeId));
     } else {
       setReachableNodes([]);
+      setAdjacentNodes([]);
     }
   }, [gameState.hasRolledMovement, gameState.movesRemaining, activeInvestigator?.locationNodeId]);
 
@@ -172,7 +199,7 @@ export default function App() {
   // ACTION HANDLERS
   // -------------------------------------------------------------
 
-  // 1. Roll Movement (2D6)
+  // 1. Roll Movement (2D6) with 3D physical dice tray
   const handleRollMovement = () => {
     if (!activeInvestigator) return;
     const { d1, d2, sum } = roll2D6();
@@ -183,8 +210,14 @@ export default function App() {
       totalMoves += 2;
     }
 
-    sound.playDiceRoll();
-    addLog(`${activeInvestigator.name} rolled movement: [${d1}, ${d2}] = ${totalMoves} movement points.`);
+    setDiceRollerData({
+      dice: [d1, d2],
+      title: 'Movement Roll (2D6)',
+      description: `${totalMoves} spaces available to traverse across Arkham.`
+    });
+    setIsDiceRollerOpen(true);
+
+    addLog(`${activeInvestigator.name} rolled movement: [${d1}, ${d2}] = ${totalMoves} spaces.`);
 
     setGameState(prev => ({
       ...prev,
@@ -199,54 +232,151 @@ export default function App() {
     }));
   };
 
-  // 2. Click node or location to move along streets
+  // 2. Click node or location to move plastic pawn along streets
   const handleNodeClick = (targetNodeId: string) => {
-    if (!activeInvestigator || !gameState.hasRolledMovement || gameState.movesRemaining <= 0) return;
+    if (!activeInvestigator || !gameState.hasRolledMovement || gameState.movesRemaining <= 0 || isMovingAnimation) return;
     if (!reachableNodes.includes(targetNodeId)) return;
+    if (targetNodeId === activeInvestigator.locationNodeId) return;
 
-    // Move investigator to target node
-    const updatedInvestigators = [...gameState.investigators];
-    const current = updatedInvestigators[gameState.activeInvestigatorIndex];
-    current.locationNodeId = targetNodeId;
+    const monsterNodeIds = gameState.activeMonsters.map(m => m.currentNodeId);
+    const path = findShortestPath(
+      activeInvestigator.locationNodeId,
+      targetNodeId,
+      gameState.movesRemaining,
+      monsterNodeIds
+    );
 
-    const targetNode = STREET_NODES[targetNodeId];
-    addLog(`${current.name} moved to ${targetNode?.name || targetNodeId}.`);
+    if (!path || path.length < 2) return;
 
-    // Check if monster in this space: if so, movement stops immediately!
-    const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === targetNodeId);
-    if (monstersHere.length > 0) {
-      addLog(`Horror encountered! ${current.name} must halt and confront ${monstersHere[0].name}!`, 'combat');
-      setGameState(prev => ({
-        ...prev,
-        investigators: updatedInvestigators,
-        movesRemaining: 0,
-        currentPhase: 'INVESTIGATOR_COMBAT'
-      }));
-      setActiveCombatMonster(monstersHere[0]);
+    // Path steps (excluding starting node)
+    const steps = path.slice(1);
+    const stepsToTake = steps.length;
+
+    // 1-step move: instantaneous with pawn clack sound
+    if (stepsToTake === 1) {
+      const nextNode = steps[0];
+      const updatedInvestigators = [...gameState.investigators];
+      const current = updatedInvestigators[gameState.activeInvestigatorIndex];
+      current.locationNodeId = nextNode;
+
+      sound.playStep();
+      addLog(`${current.name} stepped to ${getNodeDisplayLabel(nextNode)}.`);
+
+      // Check if monster in this space: halt immediately!
+      const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === nextNode);
+      if (monstersHere.length > 0) {
+        addLog(`Horror encountered! ${current.name} must halt and confront ${monstersHere[0].name}!`, 'combat');
+        setGameState(prev => ({
+          ...prev,
+          investigators: updatedInvestigators,
+          movesRemaining: 0,
+          currentPhase: 'INVESTIGATOR_COMBAT'
+        }));
+        setActiveCombatMonster(monstersHere[0]);
+        return;
+      }
+
+      const remaining = gameState.movesRemaining - 1;
+      if (remaining <= 0) {
+        setGameState(prev => ({
+          ...prev,
+          investigators: updatedInvestigators,
+          movesRemaining: 0,
+          currentPhase: 'INVESTIGATOR_ENCOUNTER'
+        }));
+      } else {
+        setGameState(prev => ({
+          ...prev,
+          investigators: updatedInvestigators,
+          movesRemaining: remaining
+        }));
+      }
       return;
     }
 
-    // Deduct 1 move or finish
-    const remaining = gameState.movesRemaining - 1;
-    if (remaining <= 0) {
-      setGameState(prev => ({
-        ...prev,
-        investigators: updatedInvestigators,
-        movesRemaining: 0,
-        currentPhase: 'INVESTIGATOR_ENCOUNTER'
-      }));
-    } else {
-      setGameState(prev => ({
-        ...prev,
-        investigators: updatedInvestigators,
-        movesRemaining: remaining
-      }));
-    }
+    // Multi-step move: animate plastic pawn hopping space-by-space along the road!
+    setIsMovingAnimation(true);
+    let stepIndex = 0;
+
+    const interval = setInterval(() => {
+      if (stepIndex < steps.length) {
+        const stepNode = steps[stepIndex];
+        sound.playStep();
+
+        setMovingPawn({
+          investigatorId: activeInvestigator.id,
+          currentNodeId: stepNode
+        });
+
+        // Check if monster in this space: halt immediately!
+        const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === stepNode);
+        if (monstersHere.length > 0) {
+          clearInterval(interval);
+          setIsMovingAnimation(false);
+          setMovingPawn(null);
+
+          const updatedInvestigators = [...gameState.investigators];
+          updatedInvestigators[gameState.activeInvestigatorIndex].locationNodeId = stepNode;
+
+          addLog(`Movement halted! ${activeInvestigator.name} ran into ${monstersHere[0].name} at ${getNodeDisplayLabel(stepNode)}!`, 'combat');
+          setGameState(prev => ({
+            ...prev,
+            investigators: updatedInvestigators,
+            movesRemaining: 0,
+            currentPhase: 'INVESTIGATOR_COMBAT'
+          }));
+          setActiveCombatMonster(monstersHere[0]);
+          return;
+        }
+
+        stepIndex++;
+      } else {
+        // Finished moving full path
+        clearInterval(interval);
+        setIsMovingAnimation(false);
+        setMovingPawn(null);
+
+        const finalNode = steps[steps.length - 1];
+        const updatedInvestigators = [...gameState.investigators];
+        updatedInvestigators[gameState.activeInvestigatorIndex].locationNodeId = finalNode;
+
+        const remainingMoves = Math.max(0, gameState.movesRemaining - stepsToTake);
+        addLog(`${activeInvestigator.name} walked ${stepsToTake} spaces to ${getNodeDisplayLabel(finalNode)}.`);
+
+        // Final space monster check
+        const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === finalNode);
+        if (monstersHere.length > 0) {
+          setGameState(prev => ({
+            ...prev,
+            investigators: updatedInvestigators,
+            movesRemaining: 0,
+            currentPhase: 'INVESTIGATOR_COMBAT'
+          }));
+          setActiveCombatMonster(monstersHere[0]);
+          return;
+        }
+
+        if (remainingMoves <= 0) {
+          setGameState(prev => ({
+            ...prev,
+            investigators: updatedInvestigators,
+            movesRemaining: 0,
+            currentPhase: 'INVESTIGATOR_ENCOUNTER'
+          }));
+        } else {
+          setGameState(prev => ({
+            ...prev,
+            investigators: updatedInvestigators,
+            movesRemaining: remainingMoves
+          }));
+        }
+      }
+    }, 160);
   };
 
   // Stop movement early
   const handleEndMovementEarly = () => {
-    addLog(`${activeInvestigator.name} stopped movement.`);
+    addLog(`${activeInvestigator.name} stopped movement at ${getNodeDisplayLabel(activeInvestigator.locationNodeId)}.`);
     setGameState(prev => ({
       ...prev,
       movesRemaining: 0,
@@ -256,47 +386,46 @@ export default function App() {
 
   // Click on a Location building
   const handleLocationClick = (locId: string) => {
-    const loc = LOCATIONS_DATA[locId];
-    if (!loc) return;
+    const locNodeId = getNodeForLocation(locId);
 
-    // If active investigator is at pointer node and currently moving, enter location!
-    if (activeInvestigator && activeInvestigator.locationNodeId === loc.pointerNodeId && gameState.hasRolledMovement) {
-      const updatedInvestigators = [...gameState.investigators];
-      updatedInvestigators[gameState.activeInvestigatorIndex].locationNodeId = locId;
-
-      addLog(`${activeInvestigator.name} entered ${loc.name}.`);
-      setGameState(prev => ({
-        ...prev,
-        investigators: updatedInvestigators,
-        movesRemaining: 0,
-        currentPhase: 'INVESTIGATOR_ENCOUNTER'
-      }));
+    // If moving and this location is reachable, move right to it!
+    if (locNodeId && reachableNodes.includes(locNodeId) && gameState.hasRolledMovement) {
+      handleNodeClick(locNodeId);
       return;
     }
 
-    // If investigator is already here, check for gate
-    const gateHere = gameState.openGates.find(g => g.locationId === locId);
-    if (gateHere && activeInvestigator?.locationNodeId === locId) {
-      setActiveGateModal(gateHere);
+    // If active investigator is currently at this location:
+    const activeLocId = getLocationIdForNode(activeInvestigator.locationNodeId) || activeInvestigator.locationNodeId;
+    if (activeLocId === locId) {
+      // Check for gate
+      const gateHere = gameState.openGates.find(g => g.locationId === locId);
+      if (gateHere) {
+        setActiveGateModal(gateHere);
+        return;
+      }
+      // If in encounter phase, draw encounter!
+      if (gameState.currentPhase === 'INVESTIGATOR_ENCOUNTER') {
+        handleDrawEncounter();
+      }
     }
   };
 
   // Take Taxi ($1 fast travel)
-  const handleSelectTaxiDestination = (destId: string) => {
+  const handleSelectTaxiDestination = (destNodeId: string) => {
     if (!activeInvestigator || activeInvestigator.money < 1) return;
 
     const updated = [...gameState.investigators];
     const inv = updated[gameState.activeInvestigatorIndex];
     inv.money -= 1;
-    inv.locationNodeId = destId;
+    inv.locationNodeId = destNodeId;
 
-    const destName = LOCATIONS_DATA[destId]?.name || STREET_NODES[destId]?.name || destId;
+    const destName = getNodeDisplayLabel(destNodeId);
     addLog(`${inv.name} paid $1 and took an Arkham Yellow Cab to ${destName}.`);
 
     setIsTaxiOpen(false);
 
     // Check if monster in this space
-    const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === destId);
+    const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === destNodeId);
     if (monstersHere.length > 0) {
       addLog(`Ambushed upon arrival! ${inv.name} faces ${monstersHere[0].name}!`, 'combat');
       setGameState(prev => ({
@@ -333,11 +462,12 @@ export default function App() {
   // Draw location encounter (D6 on Location Table)
   const handleDrawEncounter = () => {
     if (!activeInvestigator) return;
-    const locId = activeInvestigator.locationNodeId;
+    const activeNodeId = activeInvestigator.locationNodeId;
+    const locId = getLocationIdForNode(activeNodeId) || activeNodeId;
     const location = LOCATIONS_DATA[locId];
 
     if (!location) {
-      addLog(`${activeInvestigator.name} stops in an empty street space.`);
+      addLog(`${activeInvestigator.name} is resting on an empty street space. No location encounter.`);
       handleEndInvestigatorTurn();
       return;
     }
@@ -362,48 +492,61 @@ export default function App() {
     });
   };
 
-  // Resolve Encounter Modal
+  // Resolve Location Encounter Modal
   const handleResolveEncounter = (event: LocationEvent) => {
     if (!activeInvestigator || !activeEncounter) return;
 
     const updated = [...gameState.investigators];
     const inv = updated[gameState.activeInvestigatorIndex];
+    const rewards = event.reward;
 
-    // Apply rewards / consequences
-    if (event.reward) {
-      if (event.reward.money) inv.money = Math.max(0, inv.money + event.reward.money);
-      if (event.reward.strength) inv.strength = Math.min(inv.maxStrength, Math.max(1, inv.strength + event.reward.strength));
-      if (event.reward.sanity) inv.sanity = Math.min(inv.maxSanity, Math.max(1, inv.sanity + event.reward.sanity));
-      if (event.reward.retainer) inv.hasRetainer = true;
-
-      // Draw items
-      if (event.reward.itemsCount && gameState.itemDeck.length > 0) {
-        const drawn = gameState.itemDeck.slice(0, event.reward.itemsCount);
+    if (rewards) {
+      if (rewards.strength) {
+        inv.strength = Math.min(inv.maxStrength, inv.strength + rewards.strength);
+        addLog(`${inv.name} received ${rewards.strength > 0 ? '+' : ''}${rewards.strength} Strength.`);
+      }
+      if (rewards.sanity) {
+        inv.sanity = Math.min(inv.maxSanity, inv.sanity + rewards.sanity);
+        addLog(`${inv.name} received ${rewards.sanity > 0 ? '+' : ''}${rewards.sanity} Sanity.`);
+      }
+      if (rewards.money) {
+        inv.money = Math.max(0, inv.money + rewards.money);
+        addLog(`${inv.name} received $${rewards.money}.`);
+      }
+      if (rewards.itemsCount && gameState.itemDeck.length > 0) {
+        const drawn = gameState.itemDeck.slice(0, rewards.itemsCount);
         inv.items.push(...drawn);
-      }
-
-      // Draw spells
-      if (event.reward.spellsCount && gameState.spellDeck.length > 0) {
-        const drawn = gameState.spellDeck.slice(0, event.reward.spellsCount);
-        inv.spells.push(...drawn);
-      }
-
-      // Gate spawn
-      if (event.reward.gateSpawn) {
-        spawnGateAtLocation(activeEncounter.locationId);
-      }
-
-      // Monster spawn
-      if (event.reward.monsterSpawn && gameState.monsterCup.length > 0) {
-        const cup = [...gameState.monsterCup];
-        const newMonster = cup.pop()!;
-        newMonster.currentNodeId = activeEncounter.locationId;
         setGameState(prev => ({
           ...prev,
-          activeMonsters: [...prev.activeMonsters, newMonster],
-          monsterCup: cup
+          itemDeck: prev.itemDeck.slice(rewards.itemsCount)
         }));
-        addLog(`A monster spawned at ${LOCATIONS_DATA[activeEncounter.locationId]?.name}!`, 'mythos');
+        addLog(`${inv.name} acquired item: ${drawn.map(i => i.name).join(', ')}.`);
+      }
+      if (rewards.spellsCount && gameState.spellDeck.length > 0) {
+        const drawn = gameState.spellDeck.slice(0, rewards.spellsCount);
+        inv.spells.push(...drawn);
+        setGameState(prev => ({
+          ...prev,
+          spellDeck: prev.spellDeck.slice(rewards.spellsCount)
+        }));
+        addLog(`${inv.name} learned spell: ${drawn.map(s => s.name).join(', ')}.`);
+      }
+      if (rewards.gateSpawn) {
+        spawnGateAtLocation(activeEncounter.locationId);
+      }
+      if (rewards.monsterSpawn) {
+        const cup = [...gameState.monsterCup];
+        if (cup.length > 0) {
+          const m = cup.pop()!;
+          const targetNode = getNodeForLocation(activeEncounter.locationId) || activeInvestigator.locationNodeId;
+          m.currentNodeId = targetNode;
+          setGameState(prev => ({
+            ...prev,
+            activeMonsters: [...prev.activeMonsters, m],
+            monsterCup: cup
+          }));
+          addLog(`A monster spawned at ${LOCATIONS_DATA[activeEncounter.locationId]?.name}!`, 'mythos');
+        }
       }
     }
 
@@ -422,7 +565,7 @@ export default function App() {
 
     // Check if gate already exists
     if (gameState.openGates.some(g => g.locationId === locId)) {
-      addLog(`Gate already present at ${loc.name}. A monster appears!`, 'mythos');
+      addLog(`Gate already present at ${loc.name}. An extra monster emerges!`, 'mythos');
       return;
     }
 
@@ -468,8 +611,8 @@ export default function App() {
       turnsRemaining: 2
     };
 
-    const world = OTHER_WORLDS[activeGateModal.otherWorldId as keyof typeof OTHER_WORLDS];
-    addLog(`${inv.name} stepped through the gate into ${world.name} (Entered Box 2).`, 'event');
+    const worldName = OTHER_WORLDS[activeGateModal.otherWorldId as OtherWorldId]?.name || activeGateModal.otherWorldId;
+    addLog(`${inv.name} stepped into the shimmering portal and entered ${worldName} (Box 2)!`, 'mythos');
 
     setActiveGateModal(null);
     setGameState(prev => ({
@@ -479,7 +622,7 @@ export default function App() {
     }));
   };
 
-  // Destroy Gate via combat
+  // Destroy Gate in combat
   const handleDestroyGate = () => {
     if (!activeInvestigator || !activeGateModal) return;
 
@@ -489,68 +632,84 @@ export default function App() {
     inv.trophies.gates.push(activeGateModal);
 
     addLog(`${inv.name} obliterated the dimensional gate at ${LOCATIONS_DATA[activeGateModal.locationId]?.name}!`, 'combat');
+    sound.playCombatStrike(true);
 
+    const remainingGates = gameState.openGates.filter(g => g.id !== activeGateModal.id);
+
+    setActiveGateModal(null);
     setGameState(prev => ({
       ...prev,
       investigators: updated,
-      openGates: prev.openGates.filter(g => g.id !== activeGateModal.id),
+      openGates: remainingGates,
       hasTakenActionThisTurn: true
     }));
-
-    setActiveGateModal(null);
   };
 
-  // Inscribe Elder Sign on Gate
+  // Seal with Elder Sign
   const handleSealWithElderSign = () => {
     if (!activeInvestigator || !activeGateModal) return;
 
     const updated = [...gameState.investigators];
     const inv = updated[gameState.activeInvestigatorIndex];
 
-    // Spend 2 sanity
-    inv.sanity = Math.max(1, inv.sanity - 2);
-
-    // Remove elder sign item
-    const signIdx = inv.items.findIndex(i => i.specialEffect === 'seal_gate');
-    if (signIdx !== -1) {
-      inv.items.splice(signIdx, 1);
+    const elderSignIdx = inv.items.findIndex(i => i.specialEffect === 'seal_gate');
+    if (elderSignIdx !== -1) {
+      inv.items.splice(elderSignIdx, 1);
     }
 
+    inv.sanity = Math.max(1, inv.sanity - 2);
     inv.trophies.gates.push(activeGateModal);
 
-    addLog(`${inv.name} spent 2 Sanity points and inscribed an Elder Sign at ${LOCATIONS_DATA[activeGateModal.locationId]?.name}! The gate is permanently closed and sealed!`, 'combat');
+    addLog(`${inv.name} spent 2 Sanity points and inscribed an Elder Sign at ${LOCATIONS_DATA[activeGateModal.locationId]?.name}! The gate is permanently sealed!`, 'combat');
+    sound.playCombatStrike(true);
 
+    const remainingGates = gameState.openGates.filter(g => g.id !== activeGateModal.id);
+
+    setActiveGateModal(null);
     setGameState(prev => ({
       ...prev,
       investigators: updated,
-      openGates: prev.openGates.filter(g => g.id !== activeGateModal.id),
-      doomTrack: Math.max(1, prev.doomTrack - 1), // Rule: move doom factor counter back one space
+      openGates: remainingGates,
+      doomTrack: Math.max(0, prev.doomTrack - 1),
       hasTakenActionThisTurn: true
     }));
-
-    setActiveGateModal(null);
   };
 
-  // End active investigator's turn & advance to next investigator or Mythos
+  // Combat victory
+  const handleCombatVictory = (trophy: Monster) => {
+    const updated = [...gameState.investigators];
+    const inv = updated[gameState.activeInvestigatorIndex];
+
+    inv.trophies.monsters.push(trophy);
+    addLog(`${inv.name} defeated ${trophy.name} and claimed its trophy!`, 'combat');
+
+    const remainingMonsters = gameState.activeMonsters.filter(m => m.id !== trophy.id);
+
+    setActiveCombatMonster(null);
+    setGameState(prev => ({
+      ...prev,
+      investigators: updated,
+      activeMonsters: remainingMonsters,
+      hasTakenActionThisTurn: true
+    }));
+  };
+
+  // End active investigator's turn
   const handleEndInvestigatorTurn = () => {
     const nextIdx = gameState.activeInvestigatorIndex + 1;
 
     if (nextIdx < gameState.investigators.length) {
-      // Next investigator's turn
+      // Advance to next investigator
       const nextInv = gameState.investigators[nextIdx];
+      addLog(`It is now ${nextInv.name}'s turn.`, 'action');
 
-      // Handle start of turn income for retainer
+      // Check if in Other World -> advance progression (Box 2 -> Box 1 -> Return)
       const updated = [...gameState.investigators];
-      if (nextInv.hasRetainer) {
-        nextInv.money += 2;
-        addLog(`${nextInv.name} collected $2 Retainer fee from the bank.`);
-      }
-
-      // Handle Other World progression
       if (nextInv.otherWorldState) {
         if (nextInv.otherWorldState.box === 2) {
           nextInv.otherWorldState.box = 1;
-          addLog(`${nextInv.name} advanced to Box 1 in ${OTHER_WORLDS[nextInv.otherWorldState.worldId as keyof typeof OTHER_WORLDS].name}.`);
+          const world = OTHER_WORLDS[nextInv.otherWorldState.worldId as OtherWorldId];
+          addLog(`${nextInv.name} advanced to Box 1 in ${world?.name || nextInv.otherWorldState.worldId}.`);
         } else if (nextInv.otherWorldState.box === 1) {
           nextInv.otherWorldState = undefined;
           addLog(`${nextInv.name} safely returned through the gate to Arkham!`);
@@ -600,7 +759,8 @@ export default function App() {
         for (const gate of gameState.openGates) {
           if (cup.length > 0) {
             const m = cup.pop()!;
-            m.currentNodeId = gate.locationId;
+            const targetNode = getNodeForLocation(gate.locationId) || 'LOC_TRAIN_STATION';
+            m.currentNodeId = targetNode;
             newMonsters.push(m);
           }
         }
@@ -670,80 +830,46 @@ export default function App() {
     }
   };
 
-  // Combat victory callback
-  const handleCombatVictory = (monster: Monster) => {
-    if (!activeInvestigator) return;
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-
-    inv.trophies.monsters.push(monster);
-
-    addLog(`${inv.name} defeated ${monster.name}! Claimed as monster trophy.`, 'combat');
-
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      activeMonsters: prev.activeMonsters.filter(m => m.id !== monster.id),
-      currentPhase: 'INVESTIGATOR_ENCOUNTER'
-    }));
-
-    setActiveCombatMonster(null);
-  };
-
-  // Start a new game with customized investigators
-  const handleStartCustomGame = (playerConfigs: { name: string; color: any; strength: number; sanity: number }[]) => {
-    const freshGame = initializeGame(playerConfigs, true);
-    setGameState(freshGame);
+  // Start New Game handler
+  const handleStartNewGame = (configs: { name: string; color: any; strength: number; sanity: number }[]) => {
+    const newState = initializeGame(configs);
+    setGameState(newState);
     setSelectedInvestigatorIdx(0);
     setIsNewGameOpen(false);
   };
 
   return (
-    <div className="min-h-screen bg-[#140c07] text-[#f5ecd8] flex flex-col font-sans selection:bg-amber-800 selection:text-white">
-      {/* Top Vintage Navigation Header */}
-      <header className="bg-[#1f130b] border-b-2 border-[#5a3a24] px-6 py-3 flex flex-wrap items-center justify-between gap-4 shadow-xl z-20">
+    <div className="min-h-screen bg-[#120b07] text-[#f7efe1] flex flex-col font-sans select-none">
+      {/* Top Navigation Bar */}
+      <header className="bg-[#241710] border-b-2 border-[#8c6b45] px-4 py-2.5 flex items-center justify-between shadow-xl z-20">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-amber-900 border border-amber-600 flex items-center justify-center font-serif font-black text-amber-200 text-lg shadow-inner">
-            AH
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center shadow border border-amber-400/50">
+            <Skull className="w-5 h-5 text-amber-100" />
           </div>
           <div>
-            <h1 className="font-serif font-bold text-xl text-amber-200 tracking-wide leading-tight">
-              Arkham Horror <span className="text-xs font-sans text-amber-500 font-semibold">(1987 Chaosium Edition)</span>
+            <h1 className="font-serif font-bold text-lg text-amber-200 tracking-wide leading-none">
+              ARKHAM HORROR
             </h1>
-            <p className="text-[11px] text-[#caa888]">
-              Online Co-Op & Solo Board Game for Monster Hunters
+            <p className="text-[10px] text-[#bca58d] font-serif tracking-widest uppercase">
+              1987 Chaosium Boardgame Edition
             </p>
           </div>
         </div>
 
-        {/* Global Game Status Badges */}
-        <div className="flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-1.5 bg-[#2d1b10] border border-[#7a4e2b] px-3 py-1.5 rounded-lg shadow-sm">
-            <Skull className="w-4 h-4 text-red-500 animate-pulse" />
-            <span className="text-[#caa888]">Doom Track:</span>
-            <strong className="text-amber-300 font-bold text-sm">
-              {gameState.doomTrack} / {gameState.maxDoom}
-            </strong>
+        {/* Status Pills */}
+        <div className="flex items-center gap-2 text-xs">
+          <div className="bg-[#382314] px-3 py-1 rounded-full border border-[#785334] text-amber-300 font-serif font-bold">
+            Turn {gameState.turnNumber}
           </div>
-
-          <div className="flex items-center gap-1.5 bg-[#2d1b10] border border-[#7a4e2b] px-3 py-1.5 rounded-lg shadow-sm">
-            <Sparkles className="w-4 h-4 text-purple-400" />
-            <span className="text-[#caa888]">Open Gates:</span>
-            <strong className="text-purple-300 font-bold text-sm">
-              {gameState.openGates.length}
-            </strong>
+          <div className="bg-[#451616] px-3 py-1 rounded-full border border-[#882b2b] text-red-200 flex items-center gap-1 font-semibold">
+            <Skull className="w-3.5 h-3.5 text-red-400" /> Doom: {gameState.doomTrack}/14
           </div>
-
-          <div className="flex items-center gap-1.5 bg-[#2d1b10] border border-[#7a4e2b] px-3 py-1.5 rounded-lg shadow-sm">
-            <ShieldAlert className="w-4 h-4 text-rose-400" />
-            <span className="text-[#caa888]">Monsters in Arkham:</span>
-            <strong className="text-rose-300 font-bold text-sm">
-              {gameState.activeMonsters.length}
-            </strong>
+          <div className="bg-[#1c3326] px-3 py-1 rounded-full border border-[#2b6644] text-emerald-200 flex items-center gap-1 font-semibold">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Gates: {gameState.openGates.length}
           </div>
         </div>
 
-        {/* Header Action Buttons */}
+        {/* Control Buttons */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
@@ -751,41 +877,41 @@ export default function App() {
               setSoundEnabled(next);
               sound.enabled = next;
             }}
-            className="p-1.5 bg-[#3e2716] hover:bg-[#54351f] border border-[#7a4e2b] text-amber-200 rounded-lg transition"
+            className="p-1.5 rounded-lg bg-[#3d2716] hover:bg-[#52341d] text-amber-200 border border-[#785334] transition"
             title={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
           >
-            {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-stone-400" />}
+            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-stone-400" />}
           </button>
-
-          <button
-            onClick={() => setIsNewGameOpen(true)}
-            className="flex items-center gap-1.5 bg-[#3e2716] hover:bg-[#54351f] border border-[#7a4e2b] text-amber-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-          >
-            <Users className="w-4 h-4" /> New Game / Solo
-          </button>
-
           <button
             onClick={() => setIsRulesOpen(true)}
-            className="flex items-center gap-1.5 bg-[#3e2716] hover:bg-[#54351f] border border-[#7a4e2b] text-amber-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+            className="flex items-center gap-1.5 bg-[#3d2716] hover:bg-[#52341d] text-amber-200 px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-[#785334] transition"
           >
-            <BookOpen className="w-4 h-4" /> 1987 Rules
+            <BookOpen className="w-3.5 h-3.5 text-amber-400" /> Rules Manual
+          </button>
+          <button
+            onClick={() => setIsNewGameOpen(true)}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-600 hover:to-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-amber-500/50 transition shadow"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> New Game
           </button>
         </div>
       </header>
 
-      {/* Main Game Interface Layout */}
-      <main className="flex-1 p-4 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left Column: Interactive 1987 Board (8 cols) */}
-        <div className="lg:col-span-8 space-y-4">
+      {/* Main Play Area */}
+      <main className="flex-1 p-4 grid grid-cols-1 xl:grid-cols-12 gap-4 max-w-[1720px] mx-auto w-full">
+        {/* Left Column: Game Board (9 cols) */}
+        <div className="xl:col-span-8 flex flex-col gap-3">
           <GameBoard
             gameState={gameState}
             onNodeClick={handleNodeClick}
             onLocationClick={handleLocationClick}
             onOtherWorldClick={worldId => setInspectWorldId(worldId)}
             reachableNodes={reachableNodes}
+            adjacentNodes={adjacentNodes}
+            movingPawn={movingPawn}
           />
 
-          {/* Action Controls Toolbar under the board */}
+          {/* Action Controls Toolbar */}
           <ActionControls
             gameState={gameState}
             onRollMovement={handleRollMovement}
@@ -804,46 +930,48 @@ export default function App() {
           />
         </div>
 
-        {/* Right Column: Character Sheets, Log & Roster (4 cols) */}
-        <div className="lg:col-span-4 space-y-4 flex flex-col">
-          {/* Investigators Selector Tabs */}
-          <div className="bg-[#1f130b] p-2 rounded-xl border border-[#5a3a24] flex gap-1.5 overflow-x-auto">
+        {/* Right Column: Character Dashboard & Chronicle Log (4 cols) */}
+        <div className="xl:col-span-4 flex flex-col gap-3">
+          {/* Character Selector Tabs */}
+          <div className="flex gap-1 bg-[#241710] p-1.5 rounded-xl border border-[#785334] overflow-x-auto">
             {gameState.investigators.map((inv, idx) => {
-              const isSelected = selectedInvestigatorIdx === idx;
-              const isCurrentTurn = gameState.activeInvestigatorIndex === idx;
+              const isActive = idx === gameState.activeInvestigatorIndex;
+              const isSelected = idx === selectedInvestigatorIdx;
 
               return (
                 <button
                   key={inv.id}
                   onClick={() => setSelectedInvestigatorIdx(idx)}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-serif font-bold transition flex items-center justify-center gap-1.5 shrink-0 ${
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-serif font-bold transition flex-1 truncate ${
                     isSelected
-                      ? 'bg-[#4a2e19] text-amber-200 border border-amber-600 shadow'
-                      : 'text-stone-400 hover:text-stone-200'
+                      ? 'bg-amber-600 text-stone-950 shadow'
+                      : 'bg-[#382314] text-amber-200 hover:bg-[#4a311d]'
                   }`}
                 >
                   <span
-                    className="w-2.5 h-2.5 rounded-full"
+                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/40"
                     style={{ backgroundColor: inv.color }}
                   />
-                  <span>{inv.name.split(' ')[0]}</span>
-                  {isCurrentTurn && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="truncate">{inv.name}</span>
+                  {isActive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping ml-auto" />
                   )}
                 </button>
               );
             })}
           </div>
 
-          {/* Selected Investigator Character Sheet */}
+          {/* Active / Inspected Character Sheet */}
           {gameState.investigators[selectedInvestigatorIdx] && (
             <InvestigatorSheet
               investigator={gameState.investigators[selectedInvestigatorIdx]}
-              isActive={gameState.activeInvestigatorIndex === selectedInvestigatorIdx}
+              isActive={selectedInvestigatorIdx === gameState.activeInvestigatorIndex}
+              onCastSpell={() => {}}
+              onUseItem={() => {}}
             />
           )}
 
-          {/* Typewriter Event Log */}
+          {/* Arkham Gazette Event Chronicle */}
           <LogPanel logs={gameState.log} />
         </div>
       </main>
@@ -851,29 +979,40 @@ export default function App() {
       {/* ======================================================== */}
       {/* MODALS */}
       {/* ======================================================== */}
+
+      {/* 3D Physical Dice Roller Modal */}
+      <DiceRoller
+        isOpen={isDiceRollerOpen}
+        onClose={() => setIsDiceRollerOpen(false)}
+        dice={diceRollerData.dice}
+        title={diceRollerData.title}
+        description={diceRollerData.description}
+      />
+
+      {/* Rules Reference Manual Modal */}
+      <RulesModal isOpen={isRulesOpen} onClose={() => setIsRulesOpen(false)} />
+
+      {/* New Game Setup Modal */}
       <NewGameModal
         isOpen={isNewGameOpen}
-        onStartGame={handleStartCustomGame}
+        onStartGame={handleStartNewGame}
         onClose={() => setIsNewGameOpen(false)}
       />
 
-      <RulesModal
-        isOpen={isRulesOpen}
-        onClose={() => setIsRulesOpen(false)}
-      />
-
+      {/* Taxi Fast Travel Modal */}
       <TaxiModal
         isOpen={isTaxiOpen}
         onSelectDestination={handleSelectTaxiDestination}
         onClose={() => setIsTaxiOpen(false)}
       />
 
+      {/* Other Worlds Card Viewer Modal */}
       <OtherWorldModal
         worldId={inspectWorldId}
         onClose={() => setInspectWorldId(null)}
       />
 
-      {/* Combat Modal */}
+      {/* Combat Resolution Modal */}
       {activeCombatMonster && activeInvestigator && (
         <CombatModal
           investigator={activeInvestigator}
@@ -889,7 +1028,7 @@ export default function App() {
             const invs = [...gameState.investigators];
             invs[gameState.activeInvestigatorIndex] = {
               ...updated,
-              locationNodeId: 'hospital',
+              locationNodeId: 'LOC_HOSPITAL',
               isInHospital: true
             };
             setGameState(prev => ({ ...prev, investigators: invs }));

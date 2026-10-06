@@ -557,60 +557,121 @@ export const LOCATIONS_DATA: Record<string, LocationData> = {
 };
 
 export const STREET_NODES: Record<string, StreetNode> = {
-  // Taxi Stands
-  taxi_west: { id: 'taxi_west', name: 'West Taxi Stand', x: 230, y: 460, connectedTo: ['node_w1', 'node_w2'], isTaxiStand: true },
-  taxi_south: { id: 'taxi_south', name: 'South Taxi Stand', x: 475, y: 865, connectedTo: ['node_historical_society', 'node_dagon_mission'], isTaxiStand: true },
-  taxi_east: { id: 'taxi_east', name: 'East Taxi Stand', x: 925, y: 500, connectedTo: ['node_e1', 'node_e2'], isTaxiStand: true },
+  // Taxi Stands (Large yellow circular stands)
+  taxi_west: { id: 'taxi_west', name: 'West Taxi Stand', x: 230, y: 460, connectedTo: ['st_nw_1', 'st_w_1'], isTaxiStand: true },
+  taxi_south: { id: 'taxi_south', name: 'South Taxi Stand', x: 475, y: 865, connectedTo: ['st_s_2', 'st_s_3', 'st_san_tax_2'], isTaxiStand: true },
+  taxi_east: { id: 'taxi_east', name: 'East Taxi Stand', x: 925, y: 500, connectedTo: ['st_ne_3', 'st_e_1'], isTaxiStand: true },
 
-  // Train Station entrance node (North)
-  node_train_station: { id: 'node_train_station', name: 'Train Station Entrance', x: 540, y: 320, connectedTo: ['node_n1', 'node_n2'], leadsToLocation: 'train_station' },
-  node_n1: { id: 'node_n1', name: 'North Street West', x: 440, y: 340, connectedTo: ['node_train_station', 'node_harney_shack', 'node_woods'] },
-  node_n2: { id: 'node_n2', name: 'North Street East', x: 650, y: 350, connectedTo: ['node_train_station', 'node_shunned_house', 'node_black_cave'] },
+  // ==========================================
+  // 1. NORTH STREET (From West Taxi to East Taxi)
+  // ==========================================
+  st_nw_1: { id: 'st_nw_1', name: 'Northwest Road', x: 245, y: 415, connectedTo: ['taxi_west', 'st_nw_2'] },
+  st_nw_2: { id: 'st_nw_2', name: 'Northwest Road', x: 275, y: 380, connectedTo: ['st_nw_1', 'node_harney_shack'] },
+  node_harney_shack: { id: 'node_harney_shack', name: "Harney Shack Path", x: 340, y: 360, connectedTo: ['st_nw_2', 'st_n_1'], leadsToLocation: 'harney_jones_shack' },
+  st_n_1: { id: 'st_n_1', name: 'North Street', x: 405, y: 340, connectedTo: ['node_harney_shack', 'st_n_2', 'st_woods_in_1'] },
+  st_n_2: { id: 'st_n_2', name: 'North Street', x: 470, y: 330, connectedTo: ['st_n_1', 'node_train_station'] },
+  node_train_station: { id: 'node_train_station', name: 'Train Station Entrance', x: 540, y: 320, connectedTo: ['st_n_2', 'st_n_3'], leadsToLocation: 'train_station' },
+  st_n_3: { id: 'st_n_3', name: 'North Street', x: 610, y: 330, connectedTo: ['node_train_station', 'st_n_4', 'node_shunned_house'] },
+  st_n_4: { id: 'st_n_4', name: 'North Street', x: 680, y: 340, connectedTo: ['st_n_3', 'node_black_cave'] },
+  node_black_cave: { id: 'node_black_cave', name: 'Black Cave Road', x: 750, y: 355, connectedTo: ['st_n_4', 'st_ne_1', 'node_lake_miskatonic'], leadsToLocation: 'black_cave' },
+  st_ne_1: { id: 'st_ne_1', name: 'Lodge Approach', x: 805, y: 365, connectedTo: ['node_black_cave', 'node_lodge'] },
+  node_lodge: { id: 'node_lodge', name: 'Lodge Lane', x: 860, y: 380, connectedTo: ['st_ne_1', 'st_ne_2'], leadsToLocation: 'silver_twilight_lodge' },
+  st_ne_2: { id: 'st_ne_2', name: 'Northeast Avenue', x: 895, y: 415, connectedTo: ['node_lodge', 'st_ne_3'] },
+  st_ne_3: { id: 'st_ne_3', name: 'Northeast Avenue', x: 915, y: 455, connectedTo: ['st_ne_2', 'taxi_east'] },
 
-  // Harney Shack
-  node_harney_shack: { id: 'node_harney_shack', name: "Harney Shack Path", x: 340, y: 360, connectedTo: ['node_n1', 'node_w1'], leadsToLocation: 'harney_jones_shack' },
-  node_w1: { id: 'node_w1', name: 'Northwest Boulevard', x: 280, y: 400, connectedTo: ['node_harney_shack', 'taxi_west'] },
-  node_w2: { id: 'node_w2', name: 'West Avenue', x: 260, y: 530, connectedTo: ['taxi_west', 'node_graveyard', 'node_newspaper'] },
+  // ==========================================
+  // 2. WEST STREET (From West Taxi to Devil's Beach)
+  // ==========================================
+  st_w_1: { id: 'st_w_1', name: 'West Avenue', x: 240, y: 500, connectedTo: ['taxi_west', 'st_w_2'] },
+  st_w_2: { id: 'st_w_2', name: 'West Avenue', x: 250, y: 535, connectedTo: ['st_w_1', 'node_graveyard'] },
+  node_graveyard: { id: 'node_graveyard', name: 'Cemetery Gate', x: 270, y: 575, connectedTo: ['st_w_2', 'st_w_3', 'st_c_w2'], leadsToLocation: 'graveyard' },
+  st_w_3: { id: 'st_w_3', name: 'Press Street North', x: 275, y: 615, connectedTo: ['node_graveyard', 'node_newspaper'] },
+  node_newspaper: { id: 'node_newspaper', name: 'Press Street', x: 280, y: 655, connectedTo: ['st_w_3', 'st_w_4', 'st_h_np'], leadsToLocation: 'newspaper' },
+  st_w_4: { id: 'st_w_4', name: 'Southwest Road', x: 285, y: 700, connectedTo: ['node_newspaper', 'st_w_5'] },
+  st_w_5: { id: 'st_w_5', name: 'Library Approach', x: 290, y: 750, connectedTo: ['st_w_4', 'node_library'] },
+  node_library: { id: 'node_library', name: 'Library Steps', x: 300, y: 800, connectedTo: ['st_w_5', 'st_sw_1'], leadsToLocation: 'library' },
+  st_sw_1: { id: 'st_sw_1', name: 'Coastal Path', x: 325, y: 830, connectedTo: ['node_library', 'node_devils_beach'] },
+  node_devils_beach: { id: 'node_devils_beach', name: 'Beach Road', x: 360, y: 855, connectedTo: ['st_sw_1', 'st_s_1'], leadsToLocation: 'devils_beach' },
 
-  // Black Cave
-  node_black_cave: { id: 'node_black_cave', name: 'Black Cave Road', x: 750, y: 355, connectedTo: ['node_n2', 'node_lodge', 'node_lake_miskatonic'], leadsToLocation: 'black_cave' },
-  node_lodge: { id: 'node_lodge', name: 'Lodge Lane', x: 860, y: 380, connectedTo: ['node_black_cave', 'node_e1'], leadsToLocation: 'silver_twilight_lodge' },
-  node_e1: { id: 'node_e1', name: 'Northeast Street', x: 910, y: 440, connectedTo: ['node_lodge', 'taxi_east'] },
-  node_e2: { id: 'node_e2', name: 'East Boulevard', x: 910, y: 580, connectedTo: ['taxi_east', 'node_hibs_roadhouse', 'node_university'] },
+  // ==========================================
+  // 3. SOUTH SHORE ROAD (From Devil's Beach to Lighthouse)
+  // ==========================================
+  st_s_1: { id: 'st_s_1', name: 'Shoreline Drive', x: 390, y: 860, connectedTo: ['node_devils_beach', 'node_historical_society'] },
+  node_historical_society: { id: 'node_historical_society', name: 'History Walk', x: 420, y: 865, connectedTo: ['st_s_1', 'st_s_2'], leadsToLocation: 'historical_society' },
+  st_s_2: { id: 'st_s_2', name: 'South Street', x: 448, y: 865, connectedTo: ['node_historical_society', 'taxi_south'] },
+  st_s_3: { id: 'st_s_3', name: 'Mission Path', x: 500, y: 865, connectedTo: ['taxi_south', 'node_dagon_mission'] },
+  node_dagon_mission: { id: 'node_dagon_mission', name: 'Mission Alley', x: 525, y: 865, connectedTo: ['st_s_3', 'st_s_4'], leadsToLocation: 'dagon_mission' },
+  st_s_4: { id: 'st_s_4', name: 'Fairgrounds Way', x: 565, y: 865, connectedTo: ['node_dagon_mission', 'node_darks_carnival'] },
+  node_darks_carnival: { id: 'node_darks_carnival', name: 'Fairgrounds Gate', x: 605, y: 865, connectedTo: ['st_s_4', 'st_s_5', 'st_velma_carnival'], leadsToLocation: 'darks_carnival' },
+  st_s_5: { id: 'st_s_5', name: 'Old South Road', x: 655, y: 860, connectedTo: ['node_darks_carnival', 'st_s_6'] },
+  st_s_6: { id: 'st_s_6', name: 'Old South Road', x: 705, y: 855, connectedTo: ['st_s_5', 'st_s_7'] },
+  st_s_7: { id: 'st_s_7', name: 'Antique Row', x: 750, y: 850, connectedTo: ['st_s_6', 'node_curiositie_shoppe'] },
+  node_curiositie_shoppe: { id: 'node_curiositie_shoppe', name: 'Old Town Lane', x: 795, y: 845, connectedTo: ['st_s_7', 'st_se_1', 'st_found_curio'], leadsToLocation: 'curiositie_shoppe' },
+  st_se_1: { id: 'st_se_1', name: 'Beacon Trail', x: 840, y: 845, connectedTo: ['node_curiositie_shoppe', 'node_lighthouse', 'st_e_4'] },
+  node_lighthouse: { id: 'node_lighthouse', name: 'Coastal Point', x: 885, y: 845, connectedTo: ['st_se_1'], leadsToLocation: 'lighthouse' },
 
-  // Lake Miskatonic & Woods
-  node_lake_miskatonic: { id: 'node_lake_miskatonic', name: 'Lake Approach', x: 790, y: 445, connectedTo: ['node_black_cave', 'node_north_church', 'node_university'], leadsToLocation: 'lake_miskatonic' },
-  node_woods: { id: 'node_woods', name: 'Woodland Edge', x: 490, y: 420, connectedTo: ['node_n1', 'node_shunned_house', 'node_center1'], leadsToLocation: 'woods' },
-  node_shunned_house: { id: 'node_shunned_house', name: 'Shunned Path', x: 585, y: 410, connectedTo: ['node_n2', 'node_woods', 'node_north_church', 'node_center1'], leadsToLocation: 'shunned_house' },
-  node_north_church: { id: 'node_north_church', name: 'Church Square', x: 680, y: 450, connectedTo: ['node_shunned_house', 'node_lake_miskatonic', 'node_city_hall'], leadsToLocation: 'north_church' },
+  // ==========================================
+  // 4. EAST ROAD (From East Taxi to Coast)
+  // ==========================================
+  st_e_1: { id: 'st_e_1', name: 'East Boulevard', x: 915, y: 550, connectedTo: ['taxi_east', 'st_e_2'] },
+  st_e_2: { id: 'st_e_2', name: 'East Boulevard', x: 895, y: 590, connectedTo: ['st_e_1', 'node_hibs_roadhouse', 'st_uni_east'] },
+  node_hibs_roadhouse: { id: 'node_hibs_roadhouse', name: 'Highway 1', x: 860, y: 640, connectedTo: ['st_e_2', 'st_e_3', 'st_found_hibs'], leadsToLocation: 'hibs_roadhouse' },
+  st_e_3: { id: 'st_e_3', name: 'Highway 1 South', x: 855, y: 695, connectedTo: ['node_hibs_roadhouse', 'st_e_4'] },
+  st_e_4: { id: 'st_e_4', name: 'Highway 1 South', x: 850, y: 750, connectedTo: ['st_e_3', 'st_se_1'] },
 
-  // Center / City Hall / Police / Boarding House
-  node_center1: { id: 'node_center1', name: 'Central Crossroad', x: 530, y: 500, connectedTo: ['node_woods', 'node_shunned_house', 'node_graveyard', 'node_city_hall', 'node_sanitarium'], isIntersection: true },
-  node_graveyard: { id: 'node_graveyard', name: 'Cemetery Gate', x: 360, y: 560, connectedTo: ['node_w2', 'node_center1', 'node_hospital'], leadsToLocation: 'graveyard' },
-  node_city_hall: { id: 'node_city_hall', name: 'City Hall Plaza', x: 600, y: 560, connectedTo: ['node_center1', 'node_north_church', 'node_boarding_house', 'node_police_station'], leadsToLocation: 'city_hall' },
-  node_boarding_house: { id: 'node_boarding_house', name: 'Residential Way', x: 680, y: 590, connectedTo: ['node_city_hall', 'node_university', 'node_founders_rock'], leadsToLocation: 'boarding_house' },
-  node_university: { id: 'node_university', name: 'University Campus Gate', x: 755, y: 550, connectedTo: ['node_lake_miskatonic', 'node_e2', 'node_boarding_house'], leadsToLocation: 'miskatonic_university' },
+  // ==========================================
+  // 5. INTERIOR STREETS (Woods, Church, University, Lake)
+  // ==========================================
+  st_woods_in_1: { id: 'st_woods_in_1', name: 'Pine Path', x: 445, y: 380, connectedTo: ['st_n_1', 'node_woods'] },
+  node_woods: { id: 'node_woods', name: 'Woodland Edge', x: 485, y: 420, connectedTo: ['st_woods_in_1', 'st_woods_in_2'], leadsToLocation: 'woods' },
+  st_woods_in_2: { id: 'st_woods_in_2', name: 'Woods Crossroad', x: 520, y: 460, connectedTo: ['node_woods', 'node_shunned_house', 'node_center1'] },
 
-  // Hospital & Sanitarium & Newspaper
-  node_newspaper: { id: 'node_newspaper', name: 'Press Street', x: 280, y: 650, connectedTo: ['node_w2', 'node_library', 'node_hospital'], leadsToLocation: 'newspaper' },
-  node_hospital: { id: 'node_hospital', name: 'St. Mary\'s Drive', x: 380, y: 660, connectedTo: ['node_graveyard', 'node_newspaper', 'node_sanitarium', 'node_devils_beach'], leadsToLocation: 'hospital' },
-  node_sanitarium: { id: 'node_sanitarium', name: 'Asylum Avenue', x: 490, y: 660, connectedTo: ['node_center1', 'node_hospital', 'node_police_station', 'node_taxi_s_approach'], leadsToLocation: 'sanitarium' },
-  node_police_station: { id: 'node_police_station', name: 'Sheriff\'s Court', x: 590, y: 660, connectedTo: ['node_city_hall', 'node_sanitarium', 'node_velmas_diner', 'node_darks_carnival'], leadsToLocation: 'police_station' },
-  node_velmas_diner: { id: 'node_velmas_diner', name: 'Diner Alley', x: 570, y: 710, connectedTo: ['node_police_station', 'node_darks_carnival'], leadsToLocation: 'velmas_diner' },
+  node_shunned_house: { id: 'node_shunned_house', name: 'Shunned Path', x: 585, y: 410, connectedTo: ['st_n_3', 'st_woods_in_2', 'st_mid_ch1'], leadsToLocation: 'shunned_house' },
+  st_mid_ch1: { id: 'st_mid_ch1', name: 'Belfry Lane', x: 635, y: 430, connectedTo: ['node_shunned_house', 'node_north_church'] },
+  node_north_church: { id: 'node_north_church', name: 'Church Square', x: 680, y: 450, connectedTo: ['st_mid_ch1', 'st_ch_lake', 'st_ch_ch'], leadsToLocation: 'north_church' },
+  st_ch_lake: { id: 'st_ch_lake', name: 'Lake Road', x: 735, y: 450, connectedTo: ['node_north_church', 'node_lake_miskatonic'] },
+  node_lake_miskatonic: { id: 'node_lake_miskatonic', name: 'Lake Approach', x: 790, y: 445, connectedTo: ['node_black_cave', 'st_ch_lake', 'st_lake_uni'], leadsToLocation: 'lake_miskatonic' },
+  st_lake_uni: { id: 'st_lake_uni', name: 'Campus Walk North', x: 775, y: 495, connectedTo: ['node_lake_miskatonic', 'node_university'] },
+  node_university: { id: 'node_university', name: 'University Campus Gate', x: 755, y: 545, connectedTo: ['st_lake_uni', 'st_board_uni', 'st_uni_east'], leadsToLocation: 'miskatonic_university' },
+  st_uni_east: { id: 'st_uni_east', name: 'College Way', x: 840, y: 570, connectedTo: ['node_university', 'st_e_2'] },
 
-  // East side / Hib's / Founders Rock / Curiositie / Lighthouse
-  node_hibs_roadhouse: { id: 'node_hibs_roadhouse', name: 'Highway 1', x: 860, y: 650, connectedTo: ['node_e2', 'node_founders_rock', 'node_lighthouse'], leadsToLocation: 'hibs_roadhouse' },
-  node_founders_rock: { id: 'node_founders_rock', name: 'Founder\'s Trail', x: 740, y: 700, connectedTo: ['node_boarding_house', 'node_hibs_roadhouse', 'node_curiositie_shoppe'], leadsToLocation: 'founders_rock' },
-  node_curiositie_shoppe: { id: 'node_curiositie_shoppe', name: 'Old Town Lane', x: 785, y: 800, connectedTo: ['node_founders_rock', 'node_lighthouse', 'node_darks_carnival'], leadsToLocation: 'curiositie_shoppe' },
-  node_lighthouse: { id: 'node_lighthouse', name: 'Coastal Point', x: 885, y: 820, connectedTo: ['node_hibs_roadhouse', 'node_curiositie_shoppe'], leadsToLocation: 'lighthouse' },
+  // ==========================================
+  // 6. CENTRAL CROSSROADS (Center, City Hall, Boarding House)
+  // ==========================================
+  node_center1: { id: 'node_center1', name: 'Central Crossroad', x: 510, y: 510, connectedTo: ['st_woods_in_2', 'node_city_hall', 'st_c_w1', 'st_c_s1'], isIntersection: true },
+  st_c_w1: { id: 'st_c_w1', name: 'Hospital Lane West', x: 435, y: 535, connectedTo: ['node_center1', 'st_c_w2'] },
+  st_c_w2: { id: 'st_c_w2', name: 'Cemetery Crossroad', x: 325, y: 585, connectedTo: ['node_graveyard', 'st_c_w1', 'node_hospital'] },
+  st_c_s1: { id: 'st_c_s1', name: 'Center South', x: 500, y: 585, connectedTo: ['node_center1', 'node_sanitarium'] },
 
-  // South side / Carnival / Dagon / Historical / Beach / Library
-  node_darks_carnival: { id: 'node_darks_carnival', name: 'Fairgrounds Gate', x: 620, y: 830, connectedTo: ['node_police_station', 'node_velmas_diner', 'node_curiositie_shoppe', 'node_dagon_mission'], leadsToLocation: 'darks_carnival' },
-  node_dagon_mission: { id: 'node_dagon_mission', name: 'Mission Alley', x: 520, y: 830, connectedTo: ['node_darks_carnival', 'taxi_south', 'node_taxi_s_approach'], leadsToLocation: 'dagon_mission' },
-  node_taxi_s_approach: { id: 'node_taxi_s_approach', name: 'South Square', x: 480, y: 760, connectedTo: ['node_sanitarium', 'node_dagon_mission', 'taxi_south'] },
-  node_historical_society: { id: 'node_historical_society', name: 'History Walk', x: 420, y: 830, connectedTo: ['taxi_south', 'node_devils_beach'], leadsToLocation: 'historical_society' },
-  node_devils_beach: { id: 'node_devils_beach', name: 'Beach Road', x: 360, y: 840, connectedTo: ['node_hospital', 'node_historical_society', 'node_library'], leadsToLocation: 'devils_beach' },
-  node_library: { id: 'node_library', name: 'Library Steps', x: 300, y: 800, connectedTo: ['node_newspaper', 'node_devils_beach'], leadsToLocation: 'library' }
+  st_ch_ch: { id: 'st_ch_ch', name: 'Market Way', x: 640, y: 500, connectedTo: ['node_north_church', 'node_city_hall'] },
+  node_city_hall: { id: 'node_city_hall', name: 'City Hall Plaza', x: 600, y: 555, connectedTo: ['node_center1', 'st_ch_ch', 'st_ch_board', 'st_ch_pol'], leadsToLocation: 'city_hall' },
+  st_ch_board: { id: 'st_ch_board', name: 'Residential Street', x: 640, y: 570, connectedTo: ['node_city_hall', 'node_boarding_house'] },
+  node_boarding_house: { id: 'node_boarding_house', name: 'Residential Way', x: 680, y: 590, connectedTo: ['st_ch_board', 'st_board_uni', 'st_board_found'], leadsToLocation: 'boarding_house' },
+  st_board_uni: { id: 'st_board_uni', name: 'Faculty Path', x: 715, y: 565, connectedTo: ['node_boarding_house', 'node_university'] },
+  st_board_found: { id: 'st_board_found', name: 'Founder Trail North', x: 710, y: 645, connectedTo: ['node_boarding_house', 'node_founders_rock'] },
+
+  // ==========================================
+  // 7. CIVIC & MEDICAL DISTRICT (Hospital, Sanitarium, Police, Diner)
+  // ==========================================
+  st_h_np: { id: 'st_h_np', name: 'Ambulance Way', x: 330, y: 660, connectedTo: ['node_newspaper', 'node_hospital'] },
+  node_hospital: { id: 'node_hospital', name: "St. Mary's Drive", x: 380, y: 660, connectedTo: ['st_c_w2', 'st_h_np', 'st_h_san'], leadsToLocation: 'hospital' },
+  st_h_san: { id: 'st_h_san', name: 'Asylum Walk', x: 435, y: 660, connectedTo: ['node_hospital', 'node_sanitarium'] },
+  node_sanitarium: { id: 'node_sanitarium', name: 'Asylum Avenue', x: 490, y: 660, connectedTo: ['st_c_s1', 'st_h_san', 'st_san_pol', 'st_san_tax_1'], leadsToLocation: 'sanitarium' },
+  st_san_tax_1: { id: 'st_san_tax_1', name: 'Mission Approach North', x: 485, y: 730, connectedTo: ['node_sanitarium', 'st_san_tax_2'] },
+  st_san_tax_2: { id: 'st_san_tax_2', name: 'Mission Approach South', x: 480, y: 800, connectedTo: ['st_san_tax_1', 'taxi_south'] },
+
+  st_ch_pol: { id: 'st_ch_pol', name: 'Sheriff Way', x: 595, y: 610, connectedTo: ['node_city_hall', 'node_police_station'] },
+  st_san_pol: { id: 'st_san_pol', name: 'Courthouse Row', x: 540, y: 660, connectedTo: ['node_sanitarium', 'node_police_station'] },
+  node_police_station: { id: 'node_police_station', name: "Sheriff's Court", x: 590, y: 660, connectedTo: ['st_ch_pol', 'st_san_pol', 'node_velmas_diner'], leadsToLocation: 'police_station' },
+  node_velmas_diner: { id: 'node_velmas_diner', name: 'Diner Alley', x: 570, y: 720, connectedTo: ['node_police_station', 'st_velma_carnival'], leadsToLocation: 'velmas_diner' },
+  st_velma_carnival: { id: 'st_velma_carnival', name: 'Fairfield Path', x: 590, y: 790, connectedTo: ['node_velmas_diner', 'node_darks_carnival'] },
+
+  // ==========================================
+  // 8. FOUNDER'S ROCK & HIWAY 1
+  // ==========================================
+  node_founders_rock: { id: 'node_founders_rock', name: "Founder's Trail", x: 740, y: 700, connectedTo: ['st_board_found', 'st_found_hibs', 'st_found_curio'], leadsToLocation: 'founders_rock' },
+  st_found_hibs: { id: 'st_found_hibs', name: 'Tavern Road', x: 800, y: 670, connectedTo: ['node_founders_rock', 'node_hibs_roadhouse'] },
+  st_found_curio: { id: 'st_found_curio', name: 'Relic Trail', x: 765, y: 775, connectedTo: ['node_founders_rock', 'node_curiositie_shoppe'] }
 };
 
 export const INITIAL_MONSTERS: Omit<Monster, 'id' | 'currentNodeId'>[] = [
