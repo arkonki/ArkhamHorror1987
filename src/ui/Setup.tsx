@@ -5,6 +5,11 @@ import { investigatorUrl } from './assets';
 
 interface Props {
   onStart: (setup: SetupData) => void;
+  onHost: (setup: SetupData, name: string) => void;
+  onJoin: (room: string, name: string) => void;
+  defaultName: string;
+  /** Room code from an invite link. */
+  defaultRoom?: string;
   onResume?: () => void;
   onLoad: (file: File) => void;
 }
@@ -20,7 +25,10 @@ function suggested(players: number) {
   return players === 1 ? 3 : players <= 3 ? players * 2 : players;
 }
 
-export function Setup({ onStart, onResume, onLoad }: Props) {
+export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onResume, onLoad }: Props) {
+  const [mode, setMode] = useState<'hotseat' | 'online'>(defaultRoom ? 'online' : 'hotseat');
+  const [name, setName] = useState(defaultName);
+  const [code, setCode] = useState(defaultRoom ?? '');
   const [players, setPlayers] = useState(['Player 1']);
   const [picks, setPicks] = useState<Pick[]>([]);
   const [options, setOptions] = useState<Options>(DEFAULT_OPTIONS);
@@ -35,13 +43,20 @@ export function Setup({ onStart, onResume, onLoad }: Props) {
 
   const update = (defId: string, patch: Partial<Pick>) => setPicks(picks.map((p) => (p.defId === defId ? { ...p, ...patch } : p)));
 
-  const start = () =>
-    onStart({
+  const start = () => {
+    const setup: SetupData = {
       seed: Math.floor(Math.random() * 2 ** 31),
-      players: players.map((name) => ({ name })),
+      players: players.map((p) => ({ name: p })),
       investigators: picks,
       options,
-    });
+    };
+    if (mode === 'online') onHost(setup, name.trim());
+    else onStart(setup);
+  };
+  const tab = (m: typeof mode, label: string) => (
+    <button onClick={() => setMode(m)} className={`rounded-md px-4 py-1.5 ${mode === m ? 'bg-amber-200 text-stone-900' : 'text-stone-300 hover:bg-stone-800'}`}>{label}</button>
+  );
+  const input = 'rounded border border-stone-600 bg-stone-800 px-2 py-1 text-stone-100';
 
   return (
     <div className="mx-auto max-w-6xl p-6">
@@ -58,8 +73,32 @@ export function Setup({ onStart, onResume, onLoad }: Props) {
         </div>
       )}
 
+      <div className="mb-6 flex justify-center gap-1 rounded-lg border border-stone-700 bg-stone-900/60 p-1" role="tablist">
+        {tab('hotseat', 'Hotseat (one screen)')}
+        {tab('online', 'Online')}
+      </div>
+
+      {mode === 'online' && (
+        <section className="mb-6 grid gap-4 rounded-lg border border-amber-200/30 bg-stone-900/60 p-4 md:grid-cols-2">
+          <div>
+            <h2 className="mb-2 font-display text-xl text-amber-50">Your name</h2>
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24} placeholder="e.g. Ann" className={`${input} w-full`} />
+            <p className="mt-2 text-xs text-stone-400">To host, set up the game below and start it. You'll get a code and link to share; each player then takes one or more of the player seats.</p>
+          </div>
+          <div>
+            <h2 className="mb-2 font-display text-xl text-amber-50">Join a game</h2>
+            <div className="flex gap-2">
+              <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5))} placeholder="Room code" className={`${input} w-32 font-mono tracking-widest`} aria-label="Room code" />
+              <button disabled={code.length !== 5 || !name.trim()} onClick={() => onJoin(code, name.trim())} className="rounded-md border border-amber-300 bg-amber-300 px-4 py-1 font-semibold text-stone-900 disabled:opacity-40">
+                Join
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="mb-6 rounded-lg border border-stone-700 bg-stone-900/60 p-4">
-        <h2 className="mb-2 font-display text-xl text-amber-50">Players</h2>
+        <h2 className="mb-2 font-display text-xl text-amber-50">{mode === 'online' ? 'Player seats' : 'Players'}</h2>
         <div className="flex flex-wrap items-center gap-2">
           {players.map((p, i) => (
             <input
@@ -147,8 +186,8 @@ export function Setup({ onStart, onResume, onLoad }: Props) {
       </section>
 
       <div className="flex items-center justify-center gap-3">
-        <button disabled={picks.length === 0} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-6 py-2 font-semibold text-stone-900 disabled:opacity-40">
-          Begin the investigation
+        <button disabled={picks.length === 0 || (mode === 'online' && !name.trim())} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-6 py-2 font-semibold text-stone-900 disabled:opacity-40">
+          {mode === 'online' ? 'Host online game' : 'Begin the investigation'}
         </button>
         <label className="cursor-pointer rounded-md border border-stone-600 px-4 py-2 text-stone-300 hover:bg-stone-800">
           Load save…

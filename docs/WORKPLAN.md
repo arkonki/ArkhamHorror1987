@@ -36,7 +36,8 @@ every peer replays the same stream.
 | 6 | Gates & Other Worlds: box 2 → 1 → return, found-both-sides, attack gate, guardians, colour purge, Elder Sign, Dragon's Eye/Blue Watcher, Find Gate, Nightgaunt | ✅ |
 | 7 | Economy & meta: purchases with Fast Talk, selling, auctions (cash and items), charity & repayment, retainers, two-way trading, lost investigators & replacements, Roll of Honor | ✅ |
 | 8 | UI: board with original art, clickable spaces, prompt panel, sheets, log, autosave/file save, undo | ✅ first pass |
-| 9 | Online multiplayer (room server relaying answers), simple AI for unclaimed investigators | ⏳ next |
+| 9 | Online multiplayer (room server relaying answers) | ✅ |
+| 10 | Simple AI for unclaimed investigators | ⏳ optional |
 
 ## Step 1 — rules completion ✅
 
@@ -53,6 +54,19 @@ every peer replays the same stream.
   new investigator. A rescuer in the same box carries them box to box (Strength roll per move) or restores them
   with Heal / Cloud Memory / Healing Stone.
 - **OPTION carrying limit**: an investigator cannot pick up an item unless Strength exceeds items carried (or drops one).
+
+## Step 3 — online play ✅
+
+- `server/`: Node + `ws` room server. Each room holds the authoritative Session and checks every answer
+  (current turn index, seat ownership, legality) before broadcasting it. Rooms persist to `DATA_DIR` as
+  `(setup, answers, seats, chat)` and reload after a restart.
+- `src/net/RemoteClient.ts`: implements `GameClient`; a local replica only advances on server-echoed answers,
+  resyncs when out of step, and reconnects with backoff. A per-browser token keeps seats across reloads.
+- UI: Hotseat/Online start screen, room code + invite link, seat picker (take/leave; host can free a seat),
+  "Waiting for …" panel, connection indicator, table-talk chat, host-only undo.
+- Tests: WebSocket integration test (seats, permissions, illegal/stale answers, undo, chat, restart from disk)
+  and a static-file path-traversal test. Verified with two browsers (dev app + production build), including a
+  page reload mid-move and a server restart mid-game.
 
 ## Known gaps / simplifications
 

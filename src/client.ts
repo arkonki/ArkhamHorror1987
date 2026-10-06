@@ -1,7 +1,7 @@
 /**
- * The UI talks to the game only through a GameClient. Hotseat uses LocalClient;
- * an online client would forward answers to a server and apply the broadcast stream
- * (the engine is deterministic, so every peer replays the same answers).
+ * The UI talks to the game only through a GameClient. Hotseat uses LocalClient; online play
+ * uses RemoteClient (src/net/RemoteClient.ts), which forwards answers to the server and replays
+ * the broadcast stream — the engine is deterministic, so every peer computes the same state.
  */
 import { Session, type SaveGame } from './engine';
 import type { Answer, GameState, Prompt, Setup } from './engine';
@@ -18,6 +18,8 @@ export interface GameClient {
   answer(a: Answer): boolean;
   /** Players this client may answer for (hotseat: all). */
   controls(player: number): boolean;
+  /** Whether this client may answer the given prompt now. */
+  canAnswer(prompt: Prompt): boolean;
   canUndo(): boolean;
   undo(): void;
   save(): SaveGame;
@@ -64,6 +66,10 @@ export class LocalClient implements GameClient {
   }
 
   controls() {
+    return true;
+  }
+
+  canAnswer() {
     return true;
   }
 
