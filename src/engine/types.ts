@@ -115,6 +115,8 @@ export interface LogEntry {
 }
 
 export interface DiceShown {
+  /** Sequence number (increasing) so the UI can tell which rolls are new. */
+  seq?: number;
   label: string;
   dice: number[];
   target?: number;
@@ -146,6 +148,12 @@ export interface GameState {
   overrunSince: number | null;
   log: LogEntry[];
   lastRoll: DiceShown | null;
+  /** Every roll this game turn, oldest first (cleared each game turn). */
+  rolls: DiceShown[];
+  rollSeq: number;
+  /** Paths walked by monsters in the last Mythos movement step (for animation). */
+  monsterMoves: Record<string, string[]>;
+  moveSeq: number;
   result: null | { victory: boolean; reason: string; honor: HonorEntry[] };
   uidCounter: number;
 }

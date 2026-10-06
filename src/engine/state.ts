@@ -79,6 +79,10 @@ export function createState(setup: Setup, rng: Rng): GameState {
     overrunSince: null,
     log: [],
     lastRoll: null,
+    rolls: [],
+    rollSeq: 0,
+    monsterMoves: {},
+    moveSeq: 0,
     result: null,
     uidCounter: 1,
   };

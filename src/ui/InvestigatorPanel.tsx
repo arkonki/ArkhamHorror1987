@@ -7,6 +7,7 @@ import { nodeLabel } from '../engine/board';
 import { LOCATIONS } from '../engine/data/locations';
 import type { GameState, Investigator } from '../engine';
 import { cardUrl, investigatorUrl } from './assets';
+import { useZoom } from './Zoom';
 
 function skill(inv: Investigator, s: 'fastTalk' | 'fight' | 'knowledge' | 'sneak') {
   const base = INVESTIGATOR_BY_ID[inv.defId][s];
@@ -37,6 +38,7 @@ function Track({ label, value, color }: { label: string; value: number; color: s
 }
 
 export function InvestigatorPanel({ state }: { state: GameState }) {
+  const zoom = useZoom();
   const list = state.order.map((id) => state.investigators[id]).filter((i) => !i.out);
   const [openId, setOpenId] = useState<string | null>(null);
   return (
@@ -71,7 +73,9 @@ export function InvestigatorPanel({ state }: { state: GameState }) {
             </div>
             {open && (
               <div className="mt-2 grid gap-2">
-                <img src={investigatorUrl(inv.defId)} alt={inv.name} className="w-full rounded" />
+                <button onClick={() => zoom({ title: inv.name, images: [investigatorUrl(inv.defId)] })} aria-label={`Enlarge ${inv.name}'s sheet`}>
+                  <img src={investigatorUrl(inv.defId)} alt={inv.name} className="w-full rounded" />
+                </button>
                 <div className="flex flex-wrap gap-1 text-[11px]">
                   {inv.charity && <Tag text={inv.charity === 'owed' ? 'Repay Charity' : 'Charity'} cls="bg-indigo-900" />}
                   {inv.retainer && <Tag text="Retainer $2" cls="bg-green-900" />}
@@ -105,13 +109,16 @@ function Tag({ text, cls }: { text: string; cls: string }) {
 }
 
 function CardRow({ title, ids, name, dim }: { title: string; ids: string[]; name: (id: string) => string; dim?: boolean[] }) {
+  const zoom = useZoom();
   if (!ids.length) return <div className="text-xs text-stone-500">No {title.toLowerCase()}.</div>;
   return (
     <div>
       <div className="mb-1 text-[11px] uppercase tracking-wider text-stone-400">{title}</div>
       <div className="grid grid-cols-3 gap-1">
         {ids.map((id, i) => (
-          <img key={i} src={cardUrl(id)} alt={name(id)} title={name(id)} className={`w-full rounded transition hover:scale-[2] hover:z-20 hover:relative ${dim?.[i] ? 'opacity-40 grayscale' : ''}`} />
+          <button key={i} onClick={() => zoom({ title: name(id), images: [cardUrl(id)], caption: dim?.[i] ? 'Already used this turn.' : undefined })} aria-label={`Enlarge ${name(id)}`}>
+            <img src={cardUrl(id)} alt={name(id)} title={name(id)} className={`w-full rounded transition hover:ring-2 hover:ring-amber-300 ${dim?.[i] ? 'opacity-40 grayscale' : ''}`} />
+          </button>
         ))}
       </div>
     </div>

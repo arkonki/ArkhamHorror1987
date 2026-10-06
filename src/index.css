@@ -17,3 +17,15 @@ body {
   font-family: var(--font-sans);
   font-size: 17px;
 }
+
+@keyframes die-roll {
+  0% { transform: rotate(-200deg) scale(0.4); opacity: 0; }
+  60% { transform: rotate(20deg) scale(1.1); opacity: 1; }
+  100% { transform: rotate(0) scale(1); }
+}
+.die-roll {
+  animation: die-roll 450ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .die-roll { animation: none; }
+}

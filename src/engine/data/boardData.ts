@@ -83,7 +83,7 @@ export const STREET_EDGES: [string, string][] = [
 
 /** Location art anchor and the street spaces its pointers mark (entrances). */
 export const LOCATION_NODES: Record<LocationId, { x: number; y: number; entrances: string[] }> = {
-  harney_jones_shack: { x: 1052, y: 376, entrances: ['s9'] },
+  harney_jones_shack: { x: 1030, y: 630, entrances: ['s9'] },
   train_station: { x: 1930, y: 601, entrances: ['s1'] },
   black_cave: { x: 2635, y: 610, entrances: ['s8'] },
   silver_twilight_lodge: { x: 3055, y: 690, entrances: ['s13'] },

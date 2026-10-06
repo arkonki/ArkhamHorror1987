@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BOARD_H, BOARD_W, LOCATION_NODES, SPACES } from '../engine/data/boardData';
 import { INVESTIGATOR_BY_ID } from '../engine/data/investigators';
 import { LOCATIONS } from '../engine/data/locations';
@@ -8,6 +8,7 @@ import { NEIGHBORS, nodeLoc, nodePos } from '../engine/board';
 import type { GameState, Investigator, MonsterInst, Prompt } from '../engine';
 import { boardUrl, monsterUrl } from './assets';
 import { DECKS, doomSpace, worldBox } from './layout';
+import { useZoom } from './Zoom';
 
 interface Props {
   state: GameState;
@@ -55,6 +56,7 @@ function entranceToward(exit: string, locNodeId: string): string | undefined {
 
 export function Board({ state, prompt, onNode }: Props) {
   const [zoom, setZoom] = useState(1);
+  const openZoom = useZoom();
   const [hover, setHover] = useState<string | null>(null);
   const clickable = new Set(prompt?.nodes ?? []);
 
@@ -73,7 +75,7 @@ export function Board({ state, prompt, onNode }: Props) {
   const doom = doomSpace(state.doom);
 
   return (
-    <div className="relative h-full w-full overflow-auto rounded-lg bg-black/40" style={{ scrollbarWidth: 'thin' }}>
+    <div className="relative w-full overflow-auto rounded-lg bg-black/40 lg:h-full" style={{ scrollbarWidth: 'thin' }}>
       <div className="absolute right-3 top-3 z-10 flex gap-1">
         {[1, 1.5, 2].map((z) => (
           <button key={z} onClick={() => setZoom(z)} className={`rounded px-2 py-1 text-xs ${zoom === z ? 'bg-amber-200 text-stone-900' : 'bg-stone-800/80 text-stone-200'}`}>
@@ -152,10 +154,16 @@ export function Board({ state, prompt, onNode }: Props) {
             const d = MONSTER_BY_ID[m.def];
             const rot = d.speed === 0 || d.cls === 'flyer' ? 0 : heading(m);
             return (
-              <g key={m.uid} transform={`translate(${p.x + dx},${p.y + dy}) rotate(${rot})`}>
-                <image href={monsterUrl(d.art)} x={-COUNTER / 2} y={-COUNTER / 2} width={COUNTER} height={COUNTER} style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,.7))' }} />
-                <title>{monsterTitle(m)}</title>
-              </g>
+              <MonsterToken
+                key={m.uid}
+                m={m}
+                x={p.x + dx}
+                y={p.y + dy}
+                rot={rot}
+                path={state.monsterMoves[m.uid]}
+                moveSeq={state.moveSeq}
+                onClick={() => (clickable.has(node) ? onNode(node) : openZoom({ title: d.species, images: [monsterUrl(d.art), monsterUrl(d.art, 'back')], caption: monsterTitle(m) }))}
+              />
             );
           });
         })}
@@ -201,6 +209,31 @@ export function Board({ state, prompt, onNode }: Props) {
         <DeckCount x={DECKS.gates.x} y={DECKS.gates.y} n={state.gateDeck.length} />
       </svg>
     </div>
+  );
+}
+
+/** Remembers which Mythos movement has already been animated (per page load). */
+let animatedSeq = -1;
+
+function MonsterToken({ m, x, y, rot, path, moveSeq, onClick }: { m: MonsterInst; x: number; y: number; rot: number; path?: string[]; moveSeq: number; onClick: () => void }) {
+  const ref = useRef<SVGGElement>(null);
+  const d = MONSTER_BY_ID[m.def];
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !path || path.length < 2 || moveSeq <= animatedSeq || typeof el.animate !== 'function') return;
+    // Walk the counter along the streets it took, one space at a time.
+    const pts = path.map((n) => nodePos(n));
+    pts[pts.length - 1] = { x, y };
+    const frames = pts.map((p) => ({ transform: `translate(${p.x}px, ${p.y}px) rotate(${rot}deg)` }));
+    el.animate(frames, { duration: 260 * (pts.length - 1), easing: 'ease-in-out' });
+    const t = setTimeout(() => (animatedSeq = Math.max(animatedSeq, moveSeq)), 0);
+    return () => clearTimeout(t);
+  }, [moveSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <g ref={ref} transform={`translate(${x},${y}) rotate(${rot})`} style={{ cursor: 'pointer' }} onClick={onClick}>
+      <image href={monsterUrl(d.art)} x={-COUNTER / 2} y={-COUNTER / 2} width={COUNTER} height={COUNTER} style={{ filter: 'drop-shadow(0 6px 6px rgba(0,0,0,.7))' }} />
+      <title>{monsterTitle(m)}</title>
+    </g>
   );
 }
 

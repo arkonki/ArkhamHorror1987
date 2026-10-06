@@ -4,6 +4,7 @@ import { MONSTER_BY_ID } from '../engine/data/monsters';
 import { ITEM_BY_ID, SPELL_BY_ID } from '../engine/data/cards';
 import type { Answer, GameState, Prompt } from '../engine';
 import { cardUrl, investigatorUrl, monsterUrl } from './assets';
+import { useZoom } from './Zoom';
 
 interface Props {
   state: GameState;
@@ -25,6 +26,7 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
   const who = prompt.inv ? state.investigators[prompt.inv] : null;
   const player = who ? state.setup.players[who.player]?.name : null;
   const [picked, setPicked] = useState<string[]>([]);
+  const zoom = useZoom();
   useEffect(() => setPicked([]), [prompt]);
 
   const header = (
@@ -138,7 +140,11 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
   return (
     <div>
       {header}
-      {card && <img src={cardUrl(card)} alt="" className="mb-3 w-48 rounded shadow-lg" />}
+      {card && (
+        <button onClick={() => zoom({ title: 'Card', images: [cardUrl(card)] })} aria-label="Enlarge card">
+          <img src={cardUrl(card)} alt="" className="mb-3 w-48 rounded shadow-lg" />
+        </button>
+      )}
       {orientMonster && <img src={monsterUrl(MONSTER_BY_ID[orientMonster].art, 'back')} alt="" className="mb-2 h-28 w-28" />}
       {isMap && <p className="mb-2 text-xs text-amber-200/70">Click a highlighted space on the board, or choose below.</p>}
       <div className={`grid gap-2 ${isMap && prompt.options.length > 8 ? 'max-h-72 overflow-y-auto pr-1' : ''}`}>

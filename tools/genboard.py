@@ -9,7 +9,7 @@ PTR={'harney_jones_shack':[9],'train_station':[1],'black_cave':[8],'silver_twili
 'dagon_mission':[43,65],'hospital':[46],'sanitarium':[47],'newspaper':[48],'library':[59],
 'devils_beach':[68],'historical_society':[67],'darks_carnival':[62],'curiositie_shoppe':[64],
 'lighthouse':[60],'hibs_roadhouse':[50],'founders_rock':[52]}
-LOC={'harney_jones_shack':(1052,376),'train_station':(1930,601),'black_cave':(2635,610),
+LOC={'harney_jones_shack':(1030,630),'train_station':(1930,601),'black_cave':(2635,610),
 'silver_twilight_lodge':(3055,690),'lake_miskatonic':(2925,1080),'miskatonic_u':(2775,1280),
 'north_church':(2515,970),'shunned_house':(1995,850),'woods':(1470,940),'graveyard':(1240,1180),
 'city_hall':(2075,1260),'hospital':(1310,1560),'sanitarium':(1570,1570),'newspaper':(830,1640),

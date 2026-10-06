@@ -60,7 +60,16 @@ every peer replays the same stream.
   and leaving by the key is not supported).
 - **Several monsters entering one space**: "nearest monster attacks highest Fight" is approximated by pairing strongest monster with highest Fight.
 - Investigator-vs-investigator attacks (remorse rule) are not modelled; remorse for stranding someone by closing a gate is.
-- UI polish (Step 2): animated dice, monster movement animation, mobile layout, card zoom viewer, rules reference panel.
+
+## Step 2 — playtest & UI polish (in progress)
+
+- ✅ Dice tray: every roll since the player's last decision, with animated dice, target and ✓/✗.
+- ✅ Monster movement animation: counters walk their path space by space after each Mythos move.
+- ✅ Zoom viewer: click any card, counter (both sides) or investigator sheet.
+- ✅ Reference drawer: rules digest, Gate Appearance and location tables, Other World tables, all 49 counters, all cards.
+- ✅ Phone/tablet layout: board full width, decision panel docked at the bottom.
+- ✅ Playtest fix: Harney Jones' Shack anchor was drawn in the Other World strip.
+- ⏳ Hand playtest of auctions, Dagon charity, Other World visits and rescue in the browser.
 
 ## Rule decisions taken where the text is ambiguous
 

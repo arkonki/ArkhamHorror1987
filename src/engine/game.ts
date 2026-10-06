@@ -113,8 +113,16 @@ export class Game {
   roll(label: string, n = 1, target?: number): number[] {
     const dice = Array.from({ length: n }, () => this.rng.d6());
     const sum = dice.reduce((a, b) => a + b, 0);
-    this.s.lastRoll = { label, dice, target, success: target === undefined ? undefined : sum <= target };
+    this.showRoll({ label, dice, target, success: target === undefined ? undefined : sum <= target });
     return dice;
+  }
+
+  /** Record a roll for display (the dice tray shows every roll since the last decision). */
+  showRoll(r: GameState['rolls'][number]) {
+    const shown = { ...r, seq: ++this.s.rollSeq };
+    this.s.lastRoll = shown;
+    this.s.rolls.push(shown);
+    if (this.s.rolls.length > 60) this.s.rolls.splice(0, this.s.rolls.length - 60);
   }
 
   amount(n: Amount, label: string): number {
@@ -179,6 +187,7 @@ export class Game {
       for (;;) {
         this.s.phase = 'investigator';
         for (const i of Object.values(this.s.investigators)) i.sanityRolled = [];
+        this.s.rolls = this.s.rolls.slice(-12);
         for (const id of [...this.s.order]) {
           const inv = this.inv(id);
           if (inv.out || inv.activeFrom > this.s.turn) continue;
@@ -1638,7 +1647,9 @@ export class Game {
     const [die] = this.roll(`${inv.name}: attack`);
     total += die;
     const win = total >= sp;
-    this.s.lastRoll = { label: `${inv.name}: attack total ${total} vs SP ${sp}`, dice: [die], success: win };
+    // Replace the bare attack die with the full total so the tray shows the result.
+    this.s.rolls.pop();
+    this.showRoll({ label: `${inv.name}: attack — total ${total} vs SP ${sp}`, dice: [die], success: win });
     this.log(`${inv.name} attacks with a total of ${total} against SP ${sp}: ${win ? 'success!' : 'not enough.'}`, 'combat');
     if (win && bound && chosen.includes('bound')) yield* this.releaseBound(inv, bound, !!target.gate);
     return { win, noCounter };
@@ -2031,8 +2042,11 @@ export class Game {
         return tindalos ? !!l && LOCATIONS[l].building : !l;
       }),
     );
+    this.s.monsterMoves = {};
+    this.s.moveSeq++;
     for (const m of Object.values(this.s.monsters).sort((a, b) => a.uid.localeCompare(b.uid, undefined, { numeric: true }))) {
       if (!m.node) continue;
+      const start = m.node;
       const d = this.def(m);
       if (d.speed === 0) continue;
       if (this.invsAt(m.node).length) continue; // already engaged
@@ -2052,12 +2066,14 @@ export class Game {
         const steps = Math.min(d.speed, path.length - 1);
         m.prev = path[steps - 1] ?? m.node;
         m.node = path[steps];
+        this.s.monsterMoves[m.uid] = path.slice(0, steps + 1);
         this.log(`The ${d.species} flies to ${this.nodeName(m.node)}.`, 'mythos');
         continue;
       }
       const stopAt = investigatorNodes(false);
       let cur = m.node;
       let prev = m.prev;
+      const walked = [start];
       for (let i = 0; i < d.speed; i++) {
         let next: string;
         const exit = m.exit;
@@ -2068,10 +2084,12 @@ export class Game {
         } else next = nextStreetNode(prev, cur, d.hand ?? 'R', (opts) => this.rng.pick(opts));
         prev = cur;
         cur = next;
+        walked.push(cur);
         if (stopAt.has(cur)) break;
       }
       m.node = cur;
       m.prev = prev;
+      this.s.monsterMoves[m.uid] = walked;
     }
     this.log('The monsters prowl the streets of Arkham.', 'mythos');
   }

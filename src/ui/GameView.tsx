@@ -1,6 +1,10 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { GameClient } from '../client';
+import type { Answer } from '../engine';
 import { Board } from './Board';
+import { DiceTray } from './Dice';
+import { Reference } from './Reference';
+import { ZoomProvider } from './Zoom';
 import { InvestigatorPanel } from './InvestigatorPanel';
 import { PromptPanel } from './PromptPanel';
 
@@ -15,9 +19,18 @@ export function GameView({ client, onQuit }: Props) {
   const snap = useSyncExternalStore(client.subscribe, client.snapshot);
   const { state, prompt } = snap;
   const logRef = useRef<HTMLDivElement>(null);
+  const [seenSeq, setSeenSeq] = useState(() => state.rollSeq);
+  const [showRef, setShowRef] = useState(false);
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [snap.version]);
+
+  // Answering marks the current dice as seen; the tray then shows what the answer caused.
+  const answer = (a: Answer) => {
+    const before = state.rollSeq;
+    if (client.answer(a)) setSeenSeq(before);
+  };
+  const fresh = state.rolls.filter((r) => (r.seq ?? 0) > seenSeq);
 
   const download = () => {
     const blob = new Blob([JSON.stringify(client.save())], { type: 'application/json' });
@@ -28,59 +41,50 @@ export function GameView({ client, onQuit }: Props) {
     URL.revokeObjectURL(a.href);
   };
 
-  const roll = state.lastRoll;
+  const btn = 'rounded border border-stone-600 px-2 py-1 text-xs text-stone-300 hover:bg-stone-800 disabled:opacity-40';
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center gap-4 border-b border-stone-800 bg-stone-950/80 px-4 py-2">
-        <h1 className="font-display text-xl text-amber-100">Arkham Horror</h1>
-        <span className="text-sm text-stone-400">
-          Turn {state.turn} · {state.phase === 'mythos' ? 'Mythos Phase' : state.phase === 'over' ? 'Game over' : 'Investigator Phase'}
-        </span>
-        <span className="text-sm text-red-300">Doom {state.doom}/13</span>
-        <span className="text-sm text-purple-300">Open gates {Object.values(state.gates).filter((g) => g.location).length}</span>
-        {roll && (
-          <span className="ml-4 hidden items-center gap-1 text-sm text-stone-300 md:flex">
-            {roll.dice.map((d, i) => (
-              <span key={i} className="inline-flex h-6 w-6 items-center justify-center rounded bg-stone-100 font-bold text-stone-900">{d}</span>
-            ))}
-            <span className={roll.success === undefined ? '' : roll.success ? 'text-green-400' : 'text-red-400'}>{roll.label}</span>
+    <ZoomProvider>
+      <div className="flex min-h-screen flex-col lg:h-screen">
+        <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-stone-800 bg-stone-950/80 px-4 py-2">
+          <h1 className="font-display text-xl text-amber-100">Arkham Horror</h1>
+          <span className="text-sm text-stone-400">
+            Turn {state.turn} · {state.phase === 'mythos' ? 'Mythos Phase' : state.phase === 'over' ? 'Game over' : 'Investigator Phase'}
           </span>
-        )}
-        <div className="ml-auto flex gap-2">
-          <button className="rounded border border-stone-600 px-2 py-1 text-xs text-stone-300 hover:bg-stone-800 disabled:opacity-40" disabled={!client.canUndo()} onClick={() => client.undo()}>
-            Undo
-          </button>
-          <button className="rounded border border-stone-600 px-2 py-1 text-xs text-stone-300 hover:bg-stone-800" onClick={download}>
-            Save file
-          </button>
-          <button className="rounded border border-stone-600 px-2 py-1 text-xs text-stone-300 hover:bg-stone-800" onClick={onQuit}>
-            Menu
-          </button>
-        </div>
-      </header>
-      <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
-        <section className="min-h-[50vh] flex-1 lg:min-h-0">
-          <Board state={state} prompt={prompt} onNode={(n) => client.answer(n)} />
-        </section>
-        <aside className="flex w-full min-h-0 flex-col gap-3 lg:w-[420px]">
-          <div className="rounded-lg border border-amber-200/20 bg-stone-900/80 p-4 shadow-xl">
-            {prompt ? <PromptPanel state={state} prompt={prompt} onAnswer={(a) => client.answer(a)} /> : <GameOver state={state} onQuit={onQuit} />}
+          <span className="text-sm text-red-300">Doom {state.doom}/13</span>
+          <span className="text-sm text-purple-300">Open gates {Object.values(state.gates).filter((g) => g.location).length}</span>
+          <div className="ml-auto flex gap-2">
+            <button className={btn} onClick={() => setShowRef(true)}>Reference</button>
+            <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()}>Undo</button>
+            <button className={btn} onClick={download}>Save file</button>
+            <button className={btn} onClick={onQuit}>Menu</button>
           </div>
-          <div className="grid min-h-0 flex-1 grid-rows-2 gap-3">
-            <div className="min-h-0 overflow-y-auto pr-1">
-              <InvestigatorPanel state={state} />
+        </header>
+        <main className="flex flex-1 flex-col gap-3 p-3 pb-[48vh] lg:min-h-0 lg:flex-row lg:pb-3">
+          <section className="lg:min-h-0 lg:flex-1">
+            <Board state={state} prompt={prompt} onNode={(n) => answer(n)} />
+          </section>
+          <aside className="flex w-full flex-col gap-3 lg:min-h-0 lg:w-[420px]">
+            <div className="fixed inset-x-0 bottom-0 z-30 flex max-h-[46vh] flex-col gap-2 overflow-y-auto rounded-t-xl border-t border-amber-200/30 bg-stone-900/95 p-3 shadow-2xl backdrop-blur lg:static lg:max-h-[60vh] lg:rounded-lg lg:border lg:border-amber-200/20 lg:bg-stone-900/80 lg:p-4">
+              <DiceTray rolls={fresh} onDismiss={() => setSeenSeq(state.rollSeq)} />
+              {prompt ? <PromptPanel state={state} prompt={prompt} onAnswer={answer} /> : <GameOver state={state} onQuit={onQuit} />}
             </div>
-            <div ref={logRef} className="min-h-0 overflow-y-auto rounded-lg border border-stone-800 bg-stone-950/70 p-2 text-xs leading-relaxed">
-              {state.log.map((l, i) => (
-                <div key={i} className={l.kind ? LOG_COLORS[l.kind] : 'text-stone-200'}>
-                  {l.text}
-                </div>
-              ))}
+            <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-rows-2">
+              <div className="overflow-y-auto pr-1 lg:min-h-0">
+                <InvestigatorPanel state={state} />
+              </div>
+              <div ref={logRef} className="max-h-64 overflow-y-auto rounded-lg border border-stone-800 bg-stone-950/70 p-2 text-xs leading-relaxed lg:max-h-none lg:min-h-0">
+                {state.log.map((l, i) => (
+                  <div key={i} className={l.kind ? LOG_COLORS[l.kind] : 'text-stone-200'}>
+                    {l.text}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </aside>
-      </main>
-    </div>
+          </aside>
+        </main>
+        {showRef && <Reference onClose={() => setShowRef(false)} />}
+      </div>
+    </ZoomProvider>
   );
 }
 
