@@ -53,7 +53,19 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
     if (mode === 'online') onHost(setup, name.trim());
     else onStart(setup);
   };
-  const canStart = picks.length > 0 && (mode === 'hotseat' || !!name.trim());
+  const seatsWithoutInvestigator = players.filter((_, i) => !picks.some((p) => p.player === i));
+  const canStart = picks.length > 0 && (mode === 'hotseat' || (!!name.trim() && seatsWithoutInvestigator.length === 0));
+  const addPlayer = () => {
+    const seat = players.length;
+    setPlayers([...players, `Player ${seat + 1}`]);
+    // Give the new seat an investigator from the seat that has the most, so late joiners aren't left empty-handed.
+    const counts = players.map((_, i) => picks.filter((p) => p.player === i).length);
+    const richest = counts.indexOf(Math.max(...counts));
+    if (counts[richest] > 1) {
+      const moved = [...picks].reverse().find((p) => p.player === richest)!;
+      setPicks(picks.map((p) => (p === moved ? { ...p, player: seat } : p)));
+    }
+  };
   const tab = (m: typeof mode, label: string) => (
     <button onClick={() => setMode(m)} className={`rounded-md px-4 py-1.5 ${mode === m ? 'bg-amber-200 text-stone-900' : 'text-stone-300 hover:bg-stone-800'}`}>{label}</button>
   );
@@ -98,7 +110,13 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
                 Host online game
               </button>
             </div>
-            {!canStart && <p className="mt-2 text-xs text-stone-400">To host, enter your name and pick investigators below.</p>}
+            {!canStart && (
+              <p className="mt-2 text-xs text-stone-400">
+                {picks.length > 0 && name.trim() && seatsWithoutInvestigator.length > 0
+                  ? `Every seat needs an investigator — ${seatsWithoutInvestigator.join(', ')} ${seatsWithoutInvestigator.length > 1 ? 'have' : 'has'} none. Pick more below or reassign with each investigator's Player menu.`
+                  : 'To host, enter your name and pick investigators below.'}
+              </p>
+            )}
           </div>
         </section>
       )}
@@ -115,7 +133,7 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
             />
           ))}
           {players.length < 8 && (
-            <button className="rounded border border-stone-600 px-2 py-1 text-stone-300 hover:bg-stone-800" onClick={() => setPlayers([...players, `Player ${players.length + 1}`])}>
+            <button className="rounded border border-stone-600 px-2 py-1 text-stone-300 hover:bg-stone-800" onClick={addPlayer}>
               + player
             </button>
           )}
