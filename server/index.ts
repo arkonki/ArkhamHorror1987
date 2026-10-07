@@ -1,6 +1,7 @@
 /**
  * Arkham Horror online server: WebSocket rooms at /ws and the built app (dist/) over HTTP.
- *   PORT (default 3001), HOST (default: all interfaces), DATA_DIR (default ./data/rooms), STATIC_DIR (default ./dist)
+ *   PORT (default 3001), HOST (default: all interfaces), DATA_DIR (default ./data/rooms), STATIC_DIR (default ./dist),
+ *   ROOM_TTL_DAYS (default 14; saved rooms idle longer are deleted hourly, 0 keeps them forever)
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -83,5 +84,16 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(i
 if (isMain) {
   const port = Number(process.env.PORT ?? 3001);
   startServer({ port, host: process.env.HOST || undefined, dataDir: process.env.DATA_DIR || 'data/rooms', staticDir: process.env.STATIC_DIR || 'dist' })
-    .then(({ port: p }) => console.log(`Arkham Horror server on http://${process.env.HOST || 'localhost'}:${p} (WebSocket /ws)`));
+    .then(({ rooms, port: p }) => {
+      console.log(`Arkham Horror server on http://${process.env.HOST || 'localhost'}:${p} (WebSocket /ws)`);
+      const days = Number(process.env.ROOM_TTL_DAYS ?? 14);
+      if (days > 0) {
+        const sweep = () => {
+          const gone = rooms.sweep(days * 86_400_000);
+          if (gone.length) console.log(`Removed ${gone.length} inactive room(s): ${gone.join(', ')}`);
+        };
+        sweep();
+        setInterval(sweep, 3_600_000).unref();
+      }
+    });
 }

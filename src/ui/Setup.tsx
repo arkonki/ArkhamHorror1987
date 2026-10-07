@@ -118,6 +118,17 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
               </p>
             )}
           </div>
+          <details className="text-sm text-stone-300 md:col-span-2">
+            <summary className="cursor-pointer text-amber-100">How online play works</summary>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li><b>Host</b> enters a name, adds a seat for each player, picks investigators and gives each one to a seat with its <i>Player</i> menu. Every seat needs at least one investigator. Then press <i>Host online game</i>.</li>
+              <li>Share the five-letter <b>room code</b> or the invite link (click the code in the game header to copy the link).</li>
+              <li><b>Everyone else</b> enters a name and the code under <i>Join a game</i>, then <i>takes</i> a seat, or chooses <i>Just watch</i>. The host takes a seat too.</li>
+              <li>You make the decisions for your seat's investigators; everyone else sees <i>Waiting for …</i>. Shared choices, like pointing a new monster's arrow, can be made by anyone seated. <i>Log &amp; chat</i> has table talk.</li>
+              <li>Reloading or losing connection is fine: you're put back in your seat. The host can <i>Undo</i> a decision and free a seat from <i>Seats</i> if someone leaves.</li>
+              <li>Anyone with the code can join a free seat, so share it only with your table. Rooms nobody has touched for two weeks are deleted automatically.</li>
+            </ol>
+          </details>
         </section>
       )}
 

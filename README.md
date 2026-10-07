@@ -177,8 +177,12 @@ One Node process serves both the built app and the online rooms on a single port
 ```bash
 npm ci
 npm run build
-npm start            # PORT (default 3001), HOST (default all), DATA_DIR (default data/rooms)
+npm start            # PORT (default 3001), HOST (default all), DATA_DIR (default data/rooms),
+                     # ROOM_TTL_DAYS (default 14)
 ```
+
+Rooms nobody has touched (no answer, seat change or chat message) for `ROOM_TTL_DAYS` are deleted hourly, and
+once at startup; rooms with someone connected are never removed. Set `ROOM_TTL_DAYS=0` to keep them forever.
 
 Or with Docker — mount a volume at `/data` so games persist:
 

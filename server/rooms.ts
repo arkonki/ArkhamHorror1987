@@ -3,7 +3,7 @@
  * Each room holds the authoritative Session; answers are validated (turn order, seat ownership,
  * legality) before being applied and broadcast.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { Session } from '../src/engine/session';
@@ -99,6 +99,29 @@ export class RoomManager {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Delete saved rooms nobody has touched for `ttlMs` (judged by the file's last write, which every
+   * answer, seat change and chat message refreshes). Rooms with someone connected are never removed.
+   */
+  sweep(ttlMs: number, now = Date.now()): string[] {
+    if (!this.dataDir) return [];
+    const removed: string[] = [];
+    for (const file of readdirSync(this.dataDir)) {
+      const code = file.replace(/\.json$/, '');
+      if (!file.endsWith('.json') || !ROOM_CODE.test(code)) continue;
+      if ((this.rooms.get(code)?.conns.size ?? 0) > 0) continue;
+      try {
+        if (now - statSync(this.path(code)).mtimeMs < ttlMs) continue;
+        unlinkSync(this.path(code));
+        this.rooms.delete(code);
+        removed.push(code);
+      } catch {
+        // already gone or unreadable: leave it for the next sweep
+      }
+    }
+    return removed;
   }
 
   newCode(): string {
