@@ -51,7 +51,7 @@ export class RemoteClient implements GameClient {
   private ws: WebSocket | null = null;
   private create: Setup | null;
   private listeners = new Set<() => void>();
-  private version = 0;
+  version = 0;
   private snap: Snapshot | null = null;
   private retry = 0;
   private closed = false;

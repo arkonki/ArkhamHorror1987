@@ -7,7 +7,7 @@ import { GameView } from './GameView';
 
 /** Wraps GameView for online play: connection screen, seats, waiting state, chat. */
 export function OnlineGame({ client, onQuit }: { client: RemoteClient; onQuit: () => void }) {
-  useSyncExternalStore(client.subscribe, () => client.ready() ? client.snapshot().version : -1);
+  useSyncExternalStore(client.subscribe, () => client.version);
   const [seatsOpen, setSeatsOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 

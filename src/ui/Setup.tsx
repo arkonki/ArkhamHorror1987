@@ -53,6 +53,7 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
     if (mode === 'online') onHost(setup, name.trim());
     else onStart(setup);
   };
+  const canStart = picks.length > 0 && (mode === 'hotseat' || !!name.trim());
   const tab = (m: typeof mode, label: string) => (
     <button onClick={() => setMode(m)} className={`rounded-md px-4 py-1.5 ${mode === m ? 'bg-amber-200 text-stone-900' : 'text-stone-300 hover:bg-stone-800'}`}>{label}</button>
   );
@@ -83,16 +84,21 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
           <div>
             <h2 className="mb-2 font-display text-xl text-amber-50">Your name</h2>
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24} placeholder="e.g. Ann" className={`${input} w-full`} />
-            <p className="mt-2 text-xs text-stone-400">To host, set up the game below and start it. You'll get a code and link to share; each player then takes one or more of the player seats.</p>
+            <p className="mt-2 text-xs text-stone-400">To host, pick investigators and rule options below, then press Host online game. You'll get a code and link to share; each player then takes one or more of the player seats.</p>
           </div>
           <div>
             <h2 className="mb-2 font-display text-xl text-amber-50">Join a game</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5))} placeholder="Room code" className={`${input} w-32 font-mono tracking-widest`} aria-label="Room code" />
               <button disabled={code.length !== 5 || !name.trim()} onClick={() => onJoin(code, name.trim())} className="rounded-md border border-amber-300 bg-amber-300 px-4 py-1 font-semibold text-stone-900 disabled:opacity-40">
                 Join
               </button>
+              <span className="text-stone-400">or</span>
+              <button disabled={!canStart} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-4 py-1 font-semibold text-stone-900 disabled:opacity-40">
+                Host online game
+              </button>
             </div>
+            {!canStart && <p className="mt-2 text-xs text-stone-400">To host, enter your name and pick investigators below.</p>}
           </div>
         </section>
       )}
@@ -186,9 +192,11 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
       </section>
 
       <div className="flex items-center justify-center gap-3">
-        <button disabled={picks.length === 0 || (mode === 'online' && !name.trim())} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-6 py-2 font-semibold text-stone-900 disabled:opacity-40">
-          {mode === 'online' ? 'Host online game' : 'Begin the investigation'}
-        </button>
+        {mode === 'hotseat' && (
+          <button disabled={!canStart} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-6 py-2 font-semibold text-stone-900 disabled:opacity-40">
+            Begin the investigation
+          </button>
+        )}
         <label className="cursor-pointer rounded-md border border-stone-600 px-4 py-2 text-stone-300 hover:bg-stone-800">
           Load save…
           <input type="file" accept="application/json" className="hidden" onChange={(e) => e.target.files?.[0] && onLoad(e.target.files[0])} />
