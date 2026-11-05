@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouse } from 'react';
-import { BOARD_H, BOARD_W, LOCATION_NODES, SPACES } from '../engine/data/boardData';
+import { LOCATION_NODES, SPACES } from '../engine/data/boardData';
 import { INVESTIGATOR_BY_ID } from '../engine/data/investigators';
 import { LOCATIONS } from '../engine/data/locations';
 import { MONSTER_BY_ID } from '../engine/data/monsters';
@@ -61,7 +61,8 @@ type Tip =
   | { kind: 'inv'; id: string };
 
 const ZOOMS = [1, 1.35, 1.8, 2.6];
-/** Only the street map is shown; the scan's doom track, decks and Other World strip are rebuilt as UI. */
+/** Only the street map is shown; the scan's doom track, decks and Other World strip are rebuilt as UI.
+ *  Keep in sync with CROP in tools/optimize_assets.py, which cuts board_view.webp to this area. */
 const CROP = { x: 590, y: 480, w: 2790, h: 1985 };
 const ASPECT = CROP.w / CROP.h;
 
@@ -195,7 +196,8 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
         style={{ scrollbarWidth: 'thin', cursor: zoom > 1 ? 'grab' : 'default' }}
       >
       <svg viewBox={`${CROP.x} ${CROP.y} ${CROP.w} ${CROP.h}`} style={{ width: svgW ? `${svgW}px` : '100%', display: 'block', maxWidth: 'none', marginInline: 'auto' }} role="img" aria-label="Arkham game board">
-        <image href={boardUrl} width={BOARD_W} height={BOARD_H} />
+        {/* The image file holds just the CROP area of the 3508x2480 scan, so it is placed there. */}
+        <image href={boardUrl} x={CROP.x} y={CROP.y} width={CROP.w} height={CROP.h} />
 
         {/* Clickable street spaces and locations */}
         {Object.values(SPACES).map((s) => {

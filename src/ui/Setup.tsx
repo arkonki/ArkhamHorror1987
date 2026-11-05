@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { INVESTIGATORS } from '../engine/data/investigators';
 import { DEFAULT_OPTIONS, type Options, type Setup as SetupData } from '../engine';
 import { Sheet } from './Sheet';
+import { boardUrl } from './assets';
 
 interface Props {
   onStart: (setup: SetupData) => void;
@@ -32,6 +33,8 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
   const [players, setPlayers] = useState(['Player 1']);
   const [picks, setPicks] = useState<Pick[]>([]);
   const [options, setOptions] = useState<Options>(DEFAULT_OPTIONS);
+  // Fetch the board while the players choose, so the game opens with the map already loaded.
+  useEffect(() => { new Image().src = boardUrl; }, []);
 
   const toggle = (defId: string) => {
     const existing = picks.find((p) => p.defId === defId);

@@ -171,6 +171,7 @@ describe('static files', () => {
     const root = mkdtempSync(join(tmpdir(), 'arkham-static-'));
     const { writeFileSync, mkdirSync } = await import('node:fs');
     writeFileSync(join(root, 'index.html'), '<h1>app</h1>');
+    writeFileSync(join(root, 'board.webp'), 'RIFF');
     mkdirSync(`${root}-secret`, { recursive: true });
     writeFileSync(join(`${root}-secret`, 'x.txt'), 'secret');
     const s = await startServer({ port: 0, dataDir: null, staticDir: root });
@@ -179,13 +180,14 @@ describe('static files', () => {
         const req = request({ port: s.port, path: p }, (res) => {
           let b = '';
           res.on('data', (c) => (b += c));
-          res.on('end', () => ok(`${res.statusCode} ${b}`));
+          res.on('end', () => ok(`${res.statusCode} ${p.endsWith('.webp') ? res.headers['content-type'] : b}`));
         });
         req.end();
       });
     });
     expect(await get('/')).toBe('200 <h1>app</h1>');
     expect(await get('/some/route?room=ABCDE')).toBe('200 <h1>app</h1>');
+    expect(await get('/board.webp')).toBe('200 image/webp'); // the board and monster art are WebP
     const name = root.split('/').pop();
     expect(await get(`/../${name}-secret/x.txt`)).not.toContain('secret');
     expect(await get(`/%2e%2e/${name}-secret/x.txt`)).not.toContain('secret');

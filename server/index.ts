@@ -12,7 +12,7 @@ import { RoomManager, type Conn } from './rooms';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 };
 
 export function startServer(opts: { port: number; host?: string; dataDir: string | null; staticDir: string | null }): Promise<{ server: Server; rooms: RoomManager; port: number }> {

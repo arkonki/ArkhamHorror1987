@@ -22,6 +22,8 @@ def save(im, *parts, quality=85):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if path.endswith('.png'):
         im.save(path, optimize=True)
+    elif path.endswith('.webp'):
+        im.save(path, 'WEBP', quality=quality, method=6)
     else:
         im.convert('RGB').save(path, quality=quality)
 
@@ -113,7 +115,7 @@ for page, side in ((0, 'front'), (1, 'back')):
         for c in range(7):
             col = c if side == 'front' else 6 - c
             cell = im.crop((int(x0 + c * cw + 4), int(y0 + r * ch + 4), int(x0 + (c + 1) * cw - 4), int(y0 + (r + 1) * ch - 4)))
-            save(diamond(cell), 'monsters', side, f'm{r}{col}.png')
+            save(diamond(cell), 'monsters', side, f'm{r}{col}.webp')
 
 # doom factor counter (front page, row 7 col 6 area on back page)
 im, cw, ch, x0, y0 = counter_cells(1)
@@ -131,3 +133,4 @@ for r, row in enumerate(INVESTIGATORS):
         y0, y1 = (0.027 + r * 0.237) * h, (0.027 + (r + 1) * 0.237) * h
         save(im.crop((int(x0), int(y0), int(x1), int(y1))), 'investigators', f'{name}.jpg')
 print('assets written to', OUT)
+print('now run tools/optimize_assets.py for the web-sized board view')
