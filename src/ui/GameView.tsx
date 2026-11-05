@@ -57,30 +57,48 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
   // Multi-space moves: clicking a space further away walks there one step (one answer) at a time,
   // so undo, saves and online replay see exactly the same answers as clicking each space.
   const walkPlan = useRef<{ inv: string; at: string; steps: string[] } | null>(null);
+  // Undo takes a whole walk back at once: `from` = decisions made before it started, `end` = after it.
+  const walkUndo = useRef<{ from: number; sent: number; end: number | null } | null>(null);
+  const endWalk = () => {
+    walkPlan.current = null;
+    // Counted from the steps sent, so it is right online too, before the server has echoed the last one.
+    if (walkUndo.current && walkUndo.current.end === null) walkUndo.current.end = walkUndo.current.from + walkUndo.current.sent;
+  };
   const onBoardNode = (n: string) => {
     const reach = prompt?.kind === 'move' ? (prompt.data?.reach as Record<string, string[]> | undefined) : undefined;
     const path = reach?.[n];
     if (prompt?.inv && path && path.length > 1) {
+      walkUndo.current = { from: client.answerCount(), sent: 1, end: null };
       walkPlan.current = { inv: prompt.inv, at: path[0], steps: path.slice(1) };
       answer(path[0]);
       return;
     }
     walkPlan.current = null;
+    walkUndo.current = null;
     answer(n);
+  };
+  const undoWalk = walkUndo.current?.end != null && walkUndo.current.end === client.answerCount() && walkUndo.current.end - walkUndo.current.from > 1;
+  const undo = () => {
+    const w = walkUndo.current;
+    walkPlan.current = null;
+    walkUndo.current = null;
+    if (w && w.end !== null && w.end === client.answerCount()) client.undo(w.from);
+    else client.undo();
   };
   useEffect(() => {
     const plan = walkPlan.current;
     if (!plan) return;
-    if (!prompt || prompt.kind !== 'move' || prompt.inv !== plan.inv) { walkPlan.current = null; return; }
+    if (!prompt || prompt.kind !== 'move' || prompt.inv !== plan.inv) { endWalk(); return; }
     if (!client.canAnswer(prompt)) return; // online: waiting for the server to echo the last step
     const next = plan.steps[0];
-    if (prompt.data?.from !== plan.at || !next || !prompt.nodes?.includes(next)) { walkPlan.current = null; return; }
+    if (prompt.data?.from !== plan.at || !next || !prompt.nodes?.includes(next)) { endWalk(); return; }
     const t = setTimeout(() => {
       if (walkPlan.current !== plan) return;
       plan.steps.shift();
       plan.at = next;
-      if (!plan.steps.length) walkPlan.current = null;
+      if (walkUndo.current) walkUndo.current.sent++;
       answer(next);
+      if (!plan.steps.length) endWalk();
     }, 140);
     return () => clearTimeout(t);
   }, [snap.version]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -116,7 +134,7 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
             </button>
             <button className={btn} onClick={() => setShowRef(true)}>Reference</button>
             <SoundToggle className={btn} />
-            <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()} title="Take back your last decision">Undo</button>
+            <button className={btn} disabled={!client.canUndo()} onClick={undo} title={undoWalk ? 'Take back the whole walk' : 'Take back your last decision'}>{undoWalk ? 'Undo walk' : 'Undo'}</button>
             <button className={btn} onClick={download}>Save<span className="hidden sm:inline"> file</span></button>
             <button className={btn} onClick={onQuit}>Menu</button>
           </div>
@@ -130,7 +148,7 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
               <div className="fixed inset-x-0 bottom-0 z-30 flex max-h-[46vh] flex-col gap-2 overflow-y-auto rounded-t-xl border-t border-amber-200/30 bg-stone-900/95 p-3 shadow-2xl backdrop-blur lg:static lg:max-h-none lg:min-h-0 lg:flex-1 lg:rounded-xl lg:border lg:border-amber-200/25 lg:bg-stone-900/90">
                 <DiceTray rolls={fresh} onDismiss={() => setSeenSeq(state.rollSeq)} />
                 {!prompt ? <GameOver state={state} onQuit={onQuit} />
-                  : client.canAnswer(prompt) || !waiting ? <PromptPanel state={state} prompt={prompt} onAnswer={(a) => { walkPlan.current = null; answer(a); }} />
+                  : client.canAnswer(prompt) || !waiting ? <PromptPanel state={state} prompt={prompt} onAnswer={(a) => { if (walkPlan.current) endWalk(); walkPlan.current = null; answer(a); }} />
                   : waiting(state, prompt)}
               </div>
             </aside>

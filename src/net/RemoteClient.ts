@@ -186,8 +186,12 @@ export class RemoteClient implements GameClient {
     return this.host && !!this.session?.answers.length && this.status === 'online';
   }
 
-  undo() {
-    this.send({ t: 'undo' });
+  undo(toAnswers?: number) {
+    this.send(toAnswers === undefined ? { t: 'undo' } : { t: 'undo', to: toAnswers });
+  }
+
+  answerCount() {
+    return this.session?.answers.length ?? 0;
   }
 
   save() {

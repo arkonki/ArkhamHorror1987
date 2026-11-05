@@ -91,8 +91,21 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
   const fill = (id: string, hot: number, base: number) =>
     `rgba(250,204,21,${hover === id ? hot : far(id) ? base * 0.45 : base})`;
 
+  // Touch screens fire emulated mouse events after a tap; a hover card opened that way never
+  // closes and covers the decision panel. Hover cards and route previews are for real mice only.
+  const touch = useRef(false);
+  useEffect(() => {
+    const seen = (e: PointerEvent) => {
+      touch.current = e.pointerType !== 'mouse';
+      if (touch.current) { setTip(null); setHover(null); }
+    };
+    window.addEventListener('pointerdown', seen);
+    window.addEventListener('pointermove', seen);
+    return () => { window.removeEventListener('pointerdown', seen); window.removeEventListener('pointermove', seen); };
+  }, []);
+  const hoverOn = (id: string) => { if (!touch.current) setHover(id); };
   const tipProps = (t: Tip) => ({
-    onMouseEnter: (e: ReactMouse) => { mouse.current = { x: e.clientX, y: e.clientY }; setTip(t); },
+    onMouseEnter: (e: ReactMouse) => { if (touch.current) return; mouse.current = { x: e.clientX, y: e.clientY }; setTip(t); },
     onMouseLeave: () => setTip((cur) => (cur && JSON.stringify(cur) === JSON.stringify(t) ? null : cur)),
   });
 
@@ -196,7 +209,7 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
               strokeWidth={far(s.id) ? 4 : 8}
               strokeDasharray={far(s.id) ? '18 12' : undefined}
               style={{ cursor: on ? 'pointer' : 'default' }}
-              onMouseEnter={(e) => { setHover(s.id); tipProps({ kind: 'street', id: s.id }).onMouseEnter(e); }}
+              onMouseEnter={(e) => { hoverOn(s.id); tipProps({ kind: 'street', id: s.id }).onMouseEnter(e); }}
               onMouseLeave={() => { setHover(null); tipProps({ kind: 'street', id: s.id }).onMouseLeave(); }}
               onClick={() => on && onNode(s.id)}
             />
@@ -206,7 +219,7 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
           const id = `loc:${loc}`;
           const on = clickable.has(id);
           return (
-            <g key={loc} onClick={() => on && onNode(id)} style={{ cursor: on ? 'pointer' : 'default' }} onMouseEnter={(e) => { setHover(id); tipProps({ kind: 'loc', id }).onMouseEnter(e); }} onMouseLeave={() => { setHover(null); tipProps({ kind: 'loc', id }).onMouseLeave(); }}>
+            <g key={loc} onClick={() => on && onNode(id)} style={{ cursor: on ? 'pointer' : 'default' }} onMouseEnter={(e) => { hoverOn(id); tipProps({ kind: 'loc', id }).onMouseEnter(e); }} onMouseLeave={() => { setHover(null); tipProps({ kind: 'loc', id }).onMouseLeave(); }}>
               <circle cx={p.x} cy={p.y} r={95} fill={on ? fill(id, 0.5, 0.25) : 'transparent'} stroke={on ? '#facc15' : 'none'} strokeWidth={far(id) ? 5 : 10} strokeDasharray={far(id) ? '20 14' : undefined} />
             </g>
           );

@@ -18,7 +18,7 @@ const TIPS: Partial<Record<PromptKind, { title: string; text: string }>> = {
     text: 'Your strongest reusable weapons are already ticked. Each choice shows what it adds against this monster, and the panel shows your chance to win. Add a spell or a one-use item if you need more (two hands at most), then Attack. A sanity roll comes first.',
   },
   cards: { title: 'Choosing cards', text: 'Click a card to pick it. Click a card in your dashboard to read it in full.' },
-  choice: { title: 'Making a choice', text: 'Pick one option. The number keys 1 to 9 work too. Hover places on the map to see what can happen there.' },
+  choice: { title: 'Making a choice', text: 'Pick one option. The number keys 1 to 9 work too, and Enter confirms when there is only one choice. Hover places on the map to see what can happen there.' },
   ack: { title: 'Read and continue', text: 'Check what happened, then continue. The dice you rolled are shown above.' },
   newInvestigator: { title: 'A new investigator', text: 'Your investigator is gone. Pick a replacement; they join next turn.' },
 };

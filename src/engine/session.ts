@@ -74,4 +74,9 @@ export class Session {
   undo(): Session {
     return new Session(this.setup, this.answers.slice(0, -1));
   }
+
+  /** Undo back to the moment `count` answers had been given (e.g. the start of a multi-space walk). */
+  undoTo(count: number): Session {
+    return new Session(this.setup, this.answers.slice(0, Math.max(0, Math.min(count, this.answers.length))));
+  }
 }

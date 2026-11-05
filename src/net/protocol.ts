@@ -27,7 +27,7 @@ export type ClientMsg =
   | { t: 'claim'; seat: number }
   | { t: 'release'; seat: number }
   | { t: 'answer'; n: number; a: Answer }
-  | { t: 'undo' }
+  | { t: 'undo'; to?: number }
   | { t: 'chat'; text: string };
 
 export type ServerMsg =

@@ -21,7 +21,10 @@ export interface GameClient {
   /** Whether this client may answer the given prompt now. */
   canAnswer(prompt: Prompt): boolean;
   canUndo(): boolean;
-  undo(): void;
+  /** Take back the last decision, or every decision after the first `toAnswers`. */
+  undo(toAnswers?: number): void;
+  /** How many decisions have been made so far. */
+  answerCount(): number;
   save(): SaveGame;
 }
 
@@ -77,9 +80,13 @@ export class LocalClient implements GameClient {
     return this.session.answers.length > 0;
   }
 
-  undo() {
-    this.session = this.session.undo();
+  undo(toAnswers?: number) {
+    this.session = toAnswers === undefined ? this.session.undo() : this.session.undoTo(toAnswers);
     this.changed();
+  }
+
+  answerCount() {
+    return this.session.answers.length;
   }
 
   save() {

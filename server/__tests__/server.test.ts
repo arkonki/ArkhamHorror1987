@@ -124,6 +124,12 @@ describe('online rooms', () => {
     expect((await bob.next('error')).msg).toMatch(/host/);
     ann.send({ t: 'undo' });
     expect((await bob.next('sync')).answers).toHaveLength(n - 1);
+    // Undo a group (a multi-space walk) back to a given answer count; refuse silly targets.
+    ann.send({ t: 'undo', to: n - 3 });
+    expect((await bob.next('sync')).answers).toHaveLength(n - 3);
+    ann.send({ t: 'undo', to: n });
+    expect((await ann.next('error')).msg).toMatch(/Cannot undo/);
+    n -= 2; // the answers now stand at n - 1 (restart check below)
 
     bob.send({ t: 'chat', text: '  The Shoggoth is coming!  ' });
     expect((await ann.next('chat')).msg).toMatchObject({ from: 'Bob', text: 'The Shoggoth is coming!' });

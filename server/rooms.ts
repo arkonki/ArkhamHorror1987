@@ -189,8 +189,12 @@ export class RoomManager {
       }
       case 'undo': {
         if (c.token !== room.host) return err('Only the host can undo.');
-        if (!room.session.answers.length) return;
-        room.session = room.session.undo();
+        const len = room.session.answers.length;
+        if (!len) return;
+        // `to`: undo a group of decisions at once (a multi-space walk), but never more than a few dozen.
+        const to = typeof msg.to === 'number' && Number.isInteger(msg.to) ? msg.to : len - 1;
+        if (to < 0 || to >= len || len - to > 30) return err('Cannot undo that far.');
+        room.session = room.session.undoTo(to);
         for (const x of room.conns) x.send(room.syncFor(x));
         return this.save(room);
       }

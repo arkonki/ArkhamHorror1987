@@ -45,6 +45,16 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
       const t = e.target as HTMLElement | null;
       if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Enter / Space confirm when there is only one thing to do ("Continue" and the like).
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (t && ['BUTTON', 'A', 'SUMMARY'].includes(t.tagName)) return; // the focused control handles it
+        const enabled = prompt.options.filter((o) => !o.disabled);
+        if (enabled.length === 1) {
+          e.preventDefault();
+          onAnswer(enabled[0].key);
+        }
+        return;
+      }
       const n = Number(e.key);
       const o = Number.isInteger(n) && n >= 1 ? prompt.options[n - 1] : undefined;
       if (o && !o.disabled) onAnswer(o.key);
