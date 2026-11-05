@@ -6,10 +6,11 @@ import { WORLDS } from '../engine/data/otherWorlds';
 import { nodeLabel } from '../engine/board';
 import { LOCATIONS } from '../engine/data/locations';
 import type { GameState, Investigator } from '../engine';
-import { cardUrl, investigatorUrl } from './assets';
+import { cardUrl } from './assets';
 import { itemNotes, spellNotes } from './describe';
 import { WorldFacts } from './Info';
 import { useZoom } from './Zoom';
+import { Sheet } from './Sheet';
 
 export type DockMode = 'hidden' | 'compact' | 'full';
 
@@ -107,6 +108,9 @@ function Compact({ state, inv }: { state: GameState; inv: Investigator }) {
   const zoom = useZoom();
   return (
     <div className="flex items-center gap-3 overflow-x-auto px-3 py-2 text-sm">
+      <button className="shrink-0" onClick={() => zoomSheet(zoom, inv)} aria-label={`Enlarge ${inv.name}'s sheet`} title="View full investigator sheet">
+        <Sheet defId={inv.defId} str={inv.str} san={inv.san} className="h-14 drop-shadow" />
+      </button>
       <div className="shrink-0">
         <div className="font-display text-lg leading-tight text-amber-50">{inv.name}</div>
         <div className="text-xs text-stone-400">📍 {where(state, inv)}</div>
@@ -141,6 +145,15 @@ function Compact({ state, inv }: { state: GameState; inv: Investigator }) {
   );
 }
 
+function zoomSheet(zoom: ReturnType<typeof useZoom>, inv: Investigator) {
+  zoom({
+    title: inv.name,
+    images: [],
+    node: <Sheet defId={inv.defId} str={inv.str} san={inv.san} className="w-[min(90vw,640px)] drop-shadow-2xl" />,
+    caption: `Strength ${inv.str} · Sanity ${inv.san}. The clips mark the current values on the sheet's tracks.`,
+  });
+}
+
 function Pill({ cls, children, title }: { cls: string; children: ReactNode; title?: string }) {
   return <span title={title} className={`shrink-0 rounded-md px-2 py-1 ${cls}`}>{children}</span>;
 }
@@ -171,8 +184,8 @@ function Full({ state, inv }: { state: GameState; inv: Investigator }) {
       {/* Character */}
       <div className={`min-w-0 rounded-xl border p-3 ${state.active === inv.id ? 'border-amber-300/60 bg-amber-950/20' : 'border-stone-700 bg-stone-900/60'}`}>
         <div className="flex items-start gap-3">
-          <button className="shrink-0 overflow-hidden rounded-lg border border-stone-600" onClick={() => zoom({ title: inv.name, images: [investigatorUrl(inv.defId)] })} aria-label={`Enlarge ${inv.name}'s sheet`} title="View full investigator sheet">
-            <div role="img" aria-label={inv.name} className="h-24 w-14" style={{ backgroundImage: `url(${investigatorUrl(inv.defId)})`, backgroundSize: '303%', backgroundPosition: '72% 69%' }} />
+          <button className="shrink-0" onClick={() => zoomSheet(zoom, inv)} aria-label={`Enlarge ${inv.name}'s sheet`} title="View full investigator sheet">
+            <Sheet defId={inv.defId} str={inv.str} san={inv.san} className="w-44 drop-shadow-lg" />
           </button>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">

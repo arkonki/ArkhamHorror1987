@@ -3,6 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 interface ZoomContent {
   title: string;
   images: string[];
+  /** Rendered instead of / before the images, e.g. an investigator sheet with its clips. */
+  node?: ReactNode;
   caption?: string;
 }
 
@@ -29,6 +31,7 @@ export function ZoomProvider({ children }: { children: ReactNode }) {
               <h2 className="font-display text-xl text-amber-50">{content.title}</h2>
               <button onClick={close} className="ml-auto rounded border border-stone-600 px-2 text-stone-300 hover:bg-stone-800">Close</button>
             </div>
+            {content.node && <div className="flex justify-center">{content.node}</div>}
             <div className="flex flex-wrap justify-center gap-4">
               {content.images.map((src) => <img key={src} src={src} alt="" className="max-h-[70vh] max-w-[min(90vw,560px)] rounded-lg shadow-lg" />)}
             </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { INVESTIGATORS } from '../engine/data/investigators';
 import { DEFAULT_OPTIONS, type Options, type Setup as SetupData } from '../engine';
-import { investigatorUrl } from './assets';
+import { Sheet } from './Sheet';
 
 interface Props {
   onStart: (setup: SetupData) => void;
@@ -191,7 +191,7 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
             return (
               <div key={d.id} className={`rounded-lg border p-2 ${pick ? 'border-amber-300 bg-amber-950/30' : 'border-stone-700 bg-stone-900/60'}`}>
                 <button onClick={() => toggle(d.id)} className="block w-full">
-                  <img src={investigatorUrl(d.id)} alt={d.name} className={`w-full rounded ${pick ? '' : 'opacity-70 hover:opacity-100'}`} />
+                  <Sheet defId={d.id} str={pick?.str ?? 5} san={10 - (pick?.str ?? 5)} bare={!pick} className={`w-full ${pick ? '' : 'opacity-70 hover:opacity-100'}`} />
                 </button>
                 {pick && (
                   <div className="mt-2 grid gap-1 text-sm">
