@@ -39,3 +39,26 @@ describe('multi-space walk routes', () => {
     });
   }
 });
+
+describe('movement odds', () => {
+  it('match 2D6, a single D6 and a bonus', () => {
+    const s = new Session(makeSetup(1, 1));
+    const inv = Object.values(s.state.investigators)[0];
+    const g = s.game;
+    inv.nextMove = null;
+    inv.items = inv.items.filter((c) => c.id !== 'ruby_of_rlyeh');
+    const two = g.moveOdds(inv);
+    expect(two.length).toBe(13);
+    expect(two[2]).toBeCloseTo(1);
+    expect(two[7]).toBeCloseTo(21 / 36);
+    expect(two[12]).toBeCloseTo(1 / 36);
+    inv.nextMove = 'd6';
+    const one = g.moveOdds(inv);
+    expect(one.length).toBe(7);
+    expect(one[4]).toBeCloseTo(3 / 6);
+    inv.nextMove = 2;
+    const plus = g.moveOdds(inv);
+    expect(plus.length).toBe(15);
+    expect(plus[9]).toBeCloseTo(21 / 36);
+  });
+});

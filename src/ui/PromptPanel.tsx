@@ -202,6 +202,9 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
           <div className="min-w-0 flex-1"><MonsterFacts d={MONSTER_BY_ID[orientMonster]} compact /></div>
         </div>
       )}
+      {!isMap && !!prompt.data?.moveOdds && (
+        <p className="mb-2 rounded bg-amber-200/10 px-2 py-1 text-sm text-amber-100">🧭 Hover a place on the map to see how far it is and your chance of reaching it with this turn's roll.</p>
+      )}
       {isMap && (
         <p className="mb-2 rounded bg-amber-200/10 px-2 py-1 text-sm text-amber-100">
           {prompt.kind === 'move' && prompt.data?.reach && Object.keys(prompt.data.reach as object).length > (prompt.nodes?.length ?? 0)

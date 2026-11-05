@@ -686,6 +686,26 @@ export class Game {
     return n;
   }
 
+  /** P(movement roll ≥ k) for k = 0…max, matching movementRoll() without rolling. */
+  moveOdds(inv: Investigator): number[] {
+    const mode = inv.nextMove;
+    const bonus = (typeof mode === 'number' ? mode : 0) + (this.hasItem(inv, 'ruby_of_rlyeh') ? 3 : 0);
+    let dist = [1]; // dist[t] = probability of total t
+    for (let d = 0; d < (mode === 'd6' ? 1 : 2); d++) {
+      const next: number[] = [];
+      dist.forEach((p, t) => { for (let f = 1; f <= 6; f++) next[t + f] = (next[t + f] ?? 0) + p / 6; });
+      dist = next;
+    }
+    const max = Math.max(0, dist.length - 1 + bonus);
+    const atLeast: number[] = [];
+    for (let k = 0; k <= max; k++) {
+      let p = 0;
+      dist.forEach((q, t) => { if (q && t + bonus >= k) p += q; });
+      atLeast.push(p);
+    }
+    return atLeast;
+  }
+
   monsterBlocks(node: string): boolean {
     const loc = nodeLoc(node);
     return this.monstersAt(node).some((m) => {
@@ -719,7 +739,12 @@ export class Game {
       if (this.hasItem(inv, 'taxi_whistle')) options.push({ key: 'whistle', label: 'Blow the Taxi Whistle ($1)', disabled: inv.money < 1 ? 'No money' : undefined });
       if (inv.automobile && !inv.turn.usedCar) options.push({ key: 'car', label: 'Drive your automobile' });
       options.push(...this.utilityOptions(inv));
-      const k = yield* this.ask({ kind: 'choice', inv: inv.id, title: `${inv.name}: Investigator acts`, text: `At ${this.nodeName(this.node(inv)!)}.`, options });
+      const odds = this.moveOdds(inv);
+      const k = yield* this.ask({
+        kind: 'choice', inv: inv.id, title: `${inv.name}: Investigator acts`, text: `At ${this.nodeName(this.node(inv)!)}.`, options,
+        // Planning aid: how far each space is and the chance this turn's roll gets there.
+        data: { from: this.node(inv), reach: this.walkReach(this.node(inv)!, odds.length - 1, false), moveOdds: odds },
+      });
       if (k === 'wait') return this.log(`${inv.name} waits.`);
       if (k === 'move') return yield* this.walk(inv, this.movementRoll(inv));
       if (k === 'taxi' || k === 'whistle') {

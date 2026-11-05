@@ -83,6 +83,11 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
   const reach = prompt?.kind === 'move' && near.size ? (prompt.data?.reach as Record<string, string[]> | undefined) ?? {} : {};
   const clickable = new Set([...near, ...Object.keys(reach)]);
   const far = (id: string) => !near.has(id) && !!reach[id];
+  // Before rolling: how far each place is and the chance this turn's roll reaches it.
+  const plan = prompt?.data?.moveOdds
+    ? { reach: (prompt.data.reach as Record<string, string[]>) ?? {}, odds: prompt.data.moveOdds as number[] }
+    : null;
+  const routes = near.size && prompt?.kind === 'move' ? reach : plan?.reach ?? {};
   const fill = (id: string, hot: number, base: number) =>
     `rgba(250,204,21,${hover === id ? hot : far(id) ? base * 0.45 : base})`;
 
@@ -208,15 +213,15 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
         })}
 
         {/* Route preview for a multi-space move */}
-        {hover && reach[hover] && reach[hover].length > 1 && (() => {
+        {hover && routes[hover] && routes[hover].length > (plan ? 0 : 1) && (() => {
           const from = (prompt?.data?.from as string | undefined);
-          const pts = [from, ...reach[hover]].filter(Boolean).map((n) => nodePos(n as string));
+          const pts = [from, ...routes[hover]].filter(Boolean).map((n) => nodePos(n as string));
           const end = pts[pts.length - 1];
           return (
             <g pointerEvents="none">
               <polyline points={pts.map((q) => `${q.x},${q.y}`).join(' ')} fill="none" stroke="#fde047" strokeWidth={16} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 30" />
               <circle cx={end.x} cy={end.y - 95} r={42} fill="#1c1917" stroke="#fde047" strokeWidth={6} />
-              <text x={end.x} y={end.y - 80} fontSize={46} textAnchor="middle" fill="#fde047" fontWeight={700}>{reach[hover].length}</text>
+              <text x={end.x} y={end.y - 80} fontSize={46} textAnchor="middle" fill="#fde047" fontWeight={700}>{routes[hover].length}</text>
             </g>
           );
         })()}
@@ -315,14 +320,27 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
       )}
       {tip && (
         <HoverCard pos={mouse}>
-          <TipBody tip={tip} state={state} />
+          <TipBody tip={tip} state={state} plan={plan} />
         </HoverCard>
       )}
     </div>
   );
 }
 
-function TipBody({ tip, state }: { tip: Tip; state: GameState }) {
+function TipBody({ tip, state, plan }: { tip: Tip; state: GameState; plan: { reach: Record<string, string[]>; odds: number[] } | null }) {
+  const reachLine = (node: string) => {
+    if (!plan) return null;
+    const steps = plan.reach[node]?.length;
+    if (!steps) {
+      return <div className="mt-1 text-xs text-stone-400">Out of walking reach this turn (a taxi or ride can still get you there).</div>;
+    }
+    const pct = Math.round((plan.odds[steps] ?? 0) * 100);
+    return (
+      <div className="mt-1 text-xs text-amber-100">
+        {steps} space{steps > 1 ? 's' : ''} away — <b className={pct >= 67 ? 'text-emerald-300' : pct >= 34 ? 'text-amber-200' : 'text-red-300'}>{pct}%</b> chance your roll gets there
+      </div>
+    );
+  };
   const nodeMonsters = (node: string) => Object.values(state.monsters).filter((m) => m.node === node);
   const nodeInvs = (node: string) => Object.values(state.investigators).filter((i) => !i.out && i.place.t === 'arkham' && i.place.node === node);
   const here = (node: string) => {
@@ -346,6 +364,7 @@ function TipBody({ tip, state }: { tip: Tip; state: GameState }) {
           <>
             {gate && <div className="mt-1 text-xs font-bold text-purple-300">An open gate is here{gate.faceUp ? ` to ${WORLDS[gate.world].name}` : ''}. Monsters guard it.</div>}
             {sign && <div className="mt-1 text-xs font-bold text-amber-200">⛤ Elder Sign: no gate or monster can appear here.</div>}
+            {reachLine(tip.id)}
             {here(tip.id)}
           </>
         }
@@ -358,6 +377,7 @@ function TipBody({ tip, state }: { tip: Tip; state: GameState }) {
         <div className="font-display text-lg capitalize text-amber-50">{nodeLabel(tip.id, (l) => LOCATIONS[l].name)}</div>
         <p className="mt-1 text-xs text-stone-400">Street space. No encounter happens on the street.</p>
         {SPACES[tip.id]?.taxi && <p className="mt-1 text-xs text-amber-100">Taxi stand: you can ride from here.</p>}
+        {reachLine(tip.id)}
         {here(tip.id)}
       </div>
     );

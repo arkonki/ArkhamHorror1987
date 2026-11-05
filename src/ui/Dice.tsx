@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { DiceShown } from '../engine';
 
 const PIPS: Record<number, [number, number][]> = {
@@ -18,17 +19,45 @@ export function Die({ value, size = 28, delay = 0 }: { value: number; size?: num
   );
 }
 
-/** Rolls made since the player's last decision, newest last. */
+/** How many of the newest rolls are shown in full; older ones fold into one line each. */
+const FULL = 2;
+
+/** Rolls made since the player's last decision. The newest are shown large; older ones fold away. */
 export function DiceTray({ rolls, onDismiss }: { rolls: DiceShown[]; onDismiss: () => void }) {
+  const [showOlder, setShowOlder] = useState(false);
   if (!rolls.length) return null;
+  const older = rolls.slice(0, Math.max(0, rolls.length - FULL));
+  const latest = rolls.slice(-FULL);
   return (
     <section className="rounded-xl border border-stone-600 bg-stone-950 p-2.5 shadow-lg" aria-label="Dice rolls">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-xs font-bold uppercase tracking-widest text-stone-300">Dice rolled</h3>
         <button onClick={onDismiss} className="rounded px-2 py-0.5 text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-100" aria-label="Dismiss dice">Hide ✕</button>
       </div>
-      <ul className="grid max-h-60 gap-2 overflow-y-auto overflow-x-hidden pr-1">
-        {rolls.map((r, i) => {
+      {older.length > 0 && (
+        <div className="mb-2">
+          <button
+            onClick={() => setShowOlder(!showOlder)}
+            className="w-full rounded px-2 py-1 text-left text-xs text-stone-400 hover:bg-stone-800 hover:text-stone-200"
+            aria-expanded={showOlder}
+          >
+            {showOlder ? '▾' : '▸'} {older.length} earlier roll{older.length > 1 ? 's' : ''}
+          </button>
+          {showOlder && (
+            <ul className="mt-1 grid max-h-40 gap-0.5 overflow-y-auto pr-1 text-xs">
+              {older.map((r, i) => (
+                <li key={r.seq ?? i} className="flex items-center gap-2 rounded bg-stone-900 px-2 py-1">
+                  <span className="font-mono text-stone-200">{r.dice.join('+')}</span>
+                  <span className="min-w-0 flex-1 truncate text-stone-300" title={r.label}>{r.label}</span>
+                  {r.success !== undefined && <span className={r.success ? 'text-green-400' : 'text-red-400'}>{r.success ? '✓' : '✗'}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      <ul className="grid gap-2">
+        {latest.map((r, i) => {
           const verdict = r.success === undefined ? null : r.success;
           const sum = r.dice.reduce((a, b) => a + b, 0);
           return (
