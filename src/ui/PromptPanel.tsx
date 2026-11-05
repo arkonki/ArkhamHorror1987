@@ -34,7 +34,8 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
   const player = who ? state.setup.players[who.player]?.name : null;
   const [picked, setPicked] = useState<string[]>([]);
   const zoom = useZoom();
-  useEffect(() => setPicked([]), [prompt]);
+  // Combat starts with the engine's suggestion (strongest reusable weapons that fit in two hands).
+  useEffect(() => setPicked(prompt.kind === 'combat' ? ((prompt.data?.suggest as string[] | undefined) ?? []) : []), [prompt]);
 
   // Number keys pick an option on simple choice prompts (not while typing in chat).
   const simple = !['combat', 'cards', 'newInvestigator'].includes(prompt.kind);
@@ -74,6 +75,13 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
       const card = who?.items.find((c) => c.uid === k);
       return n + (card ? ITEM_BY_ID[card.id].hands ?? 0 : 0);
     }, 0);
+    const bonus = (prompt.data?.bonus as Record<string, number> | undefined) ?? {};
+    const base = prompt.data?.base as number | undefined;
+    const spellKeys = (prompt.data?.spells as string[] | undefined) ?? [];
+    const total = base === undefined ? undefined : base + picked.reduce((n, k) => n + (bonus[k] ?? 0), 0);
+    const need = total === undefined ? undefined : sp - total; // the D6 must reach this
+    const chance = need === undefined ? undefined : Math.round((Math.min(6, Math.max(0, 7 - need)) / 6) * 100);
+    const castingSpell = picked.some((k) => spellKeys.includes(k));
     return (
       <div>
         {header}
@@ -85,6 +93,16 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
               Beat <span className="text-lg font-bold text-amber-200">{sp}</span> with D6 + Fight + items.
               Hands used <span className={`font-bold ${hands > 2 ? 'text-red-400' : 'text-amber-200'}`}>{hands}/2</span>
             </div>
+            {total !== undefined && chance !== undefined && (
+              <div className="mt-1 text-sm text-stone-200" aria-live="polite">
+                Your total <span className="font-bold text-amber-200">{total}</span> + D6
+                {' → '}
+                <span className={`font-bold ${chance >= 67 ? 'text-emerald-300' : chance >= 34 ? 'text-amber-200' : 'text-red-300'}`}>
+                  {chance === 100 ? 'certain hit' : chance === 0 ? 'cannot win' : `${chance}% to win`}
+                </span>
+                {castingSpell && <span className="text-stone-400"> (if the spell is cast)</span>}
+              </div>
+            )}
           </div>
         </div>
         <div className="grid gap-2">
@@ -95,13 +113,18 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
               <label key={o.key} className={`flex cursor-pointer items-center gap-2 ${secondary} ${on ? 'border-amber-300 bg-amber-900/30' : ''} ${o.disabled ? 'opacity-40' : ''}`}>
                 <input type="checkbox" disabled={!!o.disabled} checked={on} onChange={() => setPicked(on ? picked.filter((k) => k !== o.key) : [...picked, o.key])} />
                 {img && <img src={img} alt="" className="h-8 w-12 rounded object-cover" />}
-                <span>{o.label}</span>
+                <span className="flex-1">{o.label}</span>
+                {bonus[o.key] !== undefined && !o.disabled && (
+                  <span className={`shrink-0 rounded px-1.5 text-sm font-bold ${bonus[o.key] > 0 ? 'bg-amber-900/50 text-amber-200' : 'bg-stone-800 text-stone-400'}`} title={bonus[o.key] > 0 ? 'Adds this much against this target' : 'No effect against this target'}>
+                    +{bonus[o.key]}
+                  </span>
+                )}
               </label>
             );
           })}
         </div>
         <button className={`${primary} mt-3 w-full text-center font-semibold`} disabled={hands > 2} onClick={() => onAnswer(picked)}>
-          Attack! <span className="font-normal opacity-80">(Fight + {picked.length} chosen + D6)</span>
+          Attack! <span className="font-normal opacity-80">{total !== undefined ? `(${total} + D6 vs ${sp})` : `(Fight + ${picked.length} chosen + D6)`}</span>
         </button>
       </div>
     );

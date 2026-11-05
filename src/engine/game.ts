@@ -1594,6 +1594,7 @@ export class Game {
     if (bound) opts.push({ key: 'bound', label: `Bound ${this.mName(bound)} attacks (+${this.monsterSp(bound)}${sameSpecies ? ' magical' : ' physical'})`, ref: bound.def });
 
     const sp = target.monster ? this.monsterSp(target.monster) : target.gate!.sp;
+    const hint = this.attackHint(inv, target, opts, bound, sameSpecies);
     let chosen: string[] = [];
     for (;;) {
       const a = yield {
@@ -1607,7 +1608,7 @@ export class Game {
           d?.special?.includes('unharmedByGuns') && 'Unharmed by guns.',
           inv.turn.holyWater && 'Holy Water: +6 magical this turn.',
         ].filter(Boolean).join('\n'),
-        options: opts, data: { sp, monster: target.monster?.def, fight: this.skill(inv, 'fight') },
+        options: opts, data: { sp, monster: target.monster?.def, fight: this.skill(inv, 'fight'), ...hint },
       } as Prompt;
       chosen = (Array.isArray(a) ? a : a ? [a] : []).filter((k) => opts.some((o) => o.key === k && !o.disabled));
       const hands = chosen.reduce((n, k) => n + (ITEM_BY_ID[inv.items.find((c) => c.uid === k)?.id ?? '']?.hands ?? 0), 0);
@@ -1678,6 +1679,76 @@ export class Game {
     this.log(`${inv.name} attacks with a total of ${total} against SP ${sp}: ${win ? 'success!' : 'not enough.'}`, 'combat');
     if (win && bound && chosen.includes('bound')) yield* this.releaseBound(inv, bound, !!target.gate);
     return { win, noCounter };
+  }
+
+  /**
+   * Planning aid for the combat prompt (no dice, no state changes): the fixed part of the total,
+   * what each option would add against this target, and the strongest set of reusable weapons
+   * that fits in two hands. Spells count as if the cast succeeds. With Alien Spectacles against
+   * an only-magic monster just one one-handed weapon counts, which the per-option figures can't
+   * express, so they may overstate that rare case.
+   */
+  attackHint(
+    inv: Investigator, target: { monster?: MonsterInst; gate?: GateInst }, opts: PromptOption[],
+    bound: MonsterInst | null, sameSpecies: boolean,
+  ): { base: number; bonus: Record<string, number>; suggest: string[]; spells: string[] } {
+    const special = target.monster ? this.def(target.monster).special ?? [] : [];
+    const onlyMagic = special.includes('onlyMagic') || special.includes('magicAndSilver');
+    const weapons1 = special.includes('weapons1');
+    const noGuns = special.includes('unharmedByGuns');
+    const spectacles = this.hasItem(inv, 'alien_spectacles');
+    const physical = (n: number, oneHanded = false, gun = false) => {
+      if (!target.monster) return n;
+      if (gun && noGuns) return 0;
+      if (onlyMagic) return spectacles && oneHanded ? (weapons1 ? 1 : n) : 0;
+      return weapons1 ? Math.min(1, n) : n;
+    };
+    let base = physical(this.skill(inv, 'fight'));
+    if (this.s.setup.options.teamFightBonus && this.node(inv) && this.invsAt(this.node(inv)!).length > 1) base += 1;
+    if (inv.turn.holyWater) base += 6;
+
+    const bonus: Record<string, number> = {};
+    const spells: string[] = [];
+    const reusable: { key: string; bonus: number; hands: number }[] = [];
+    for (const o of opts) {
+      if (o.disabled) continue;
+      if (o.key === 'bound' && bound) {
+        bonus.bound = sameSpecies ? this.monsterSp(bound) : physical(this.monsterSp(bound));
+        continue;
+      }
+      const item = inv.items.find((c) => c.uid === o.key);
+      if (item) {
+        const it = ITEM_BY_ID[item.id];
+        const b = it.oneTurn ? 6 : it.magical ? it.attack ?? 0 : physical(it.attack ?? 0, it.hands === 1, it.gun);
+        bonus[o.key] = b;
+        if (!it.oneUse && !it.oneTurn && b > 0) reusable.push({ key: o.key, bonus: b, hands: it.hands ?? 0 });
+        continue;
+      }
+      const spell = inv.spells.find((c) => c.uid === o.key);
+      if (spell) {
+        bonus[o.key] = SPELL_BY_ID[spell.id].attack ?? 0;
+        spells.push(o.key);
+      }
+    }
+    // Best reusable set within two hands (an investigator carries only a handful of weapons).
+    let suggest: string[] = [];
+    let best = -1;
+    const n = Math.min(reusable.length, 12);
+    for (let mask = 0; mask < 1 << n; mask++) {
+      let hands = 0, sum = 0;
+      const keys: string[] = [];
+      for (let i = 0; i < n; i++) {
+        if (!(mask & (1 << i))) continue;
+        hands += reusable[i].hands;
+        sum += reusable[i].bonus;
+        keys.push(reusable[i].key);
+      }
+      if (hands <= 2 && (sum > best || (sum === best && keys.length < suggest.length))) {
+        best = sum;
+        suggest = keys;
+      }
+    }
+    return { base, bonus, suggest, spells };
   }
 
   /** After a successful attack the bound monster goes through the gate (trophy) or is set free nearby. */

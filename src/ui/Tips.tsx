@@ -15,7 +15,7 @@ const TIPS: Partial<Record<PromptKind, { title: string; text: string }>> = {
   },
   combat: {
     title: 'Fighting',
-    text: 'Tick the weapons and spells to use (two hands at most), then Attack. You win if D6 + your Fight + the items you chose reaches the monster\'s strength. A sanity roll comes first.',
+    text: 'Your strongest reusable weapons are already ticked. Each choice shows what it adds against this monster, and the panel shows your chance to win. Add a spell or a one-use item if you need more (two hands at most), then Attack. A sanity roll comes first.',
   },
   cards: { title: 'Choosing cards', text: 'Click a card to pick it. Click a card in your dashboard to read it in full.' },
   choice: { title: 'Making a choice', text: 'Pick one option. The number keys 1 to 9 work too. Hover places on the map to see what can happen there.' },
