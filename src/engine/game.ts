@@ -756,7 +756,7 @@ export class Game {
       if (this.hasItem(inv, 'silver_key')) options.push({ key: 'u:key', label: 'Use the Silver Key: pass into the Dreamlands' });
       const k = yield* this.ask({
         kind: 'move', inv: inv.id, title: `${inv.name}: move (${left} left)`, options,
-        nodes: left > 0 ? NEIGHBORS[cur] : [], data: { left, from: cur },
+        nodes: left > 0 ? NEIGHBORS[cur] : [], data: { left, from: cur, reach: this.walkReach(cur, left, passMists) },
       });
       if (k === 'stop') return;
       if (k === 'taxi') {
@@ -781,6 +781,31 @@ export class Game {
         return;
       }
     }
+  }
+
+  /**
+   * Every space this walk can still reach, with the steps to get there (excluding `from`).
+   * Mirrors walk(): entering a location ends movement, and so does a blocking monster
+   * (unless Mists of R'lyeh is active), so those can be destinations but not waypoints.
+   * Purely informational — the UI answers one step at a time along the path.
+   */
+  walkReach(from: string, left: number, passMists: boolean): Record<string, string[]> {
+    const reach: Record<string, string[]> = {};
+    const queue: string[] = [from];
+    const path: Record<string, string[]> = { [from]: [] };
+    while (queue.length) {
+      const cur = queue.shift()!;
+      const sofar = path[cur];
+      if (sofar.length >= left) continue;
+      if (cur !== from && (isLocNode(cur) || (this.monsterBlocks(cur) && !passMists))) continue;
+      for (const n of NEIGHBORS[cur] ?? []) {
+        if (path[n]) continue;
+        path[n] = [...sofar, n];
+        reach[n] = path[n];
+        queue.push(n);
+      }
+    }
+    return reach;
   }
 
   /** Vehicle travel (taxi, free ride, automobile). Blockers halt vehicles one space distant. */

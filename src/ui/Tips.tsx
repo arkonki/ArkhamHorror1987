@@ -6,7 +6,7 @@ const KEY = 'arkham.tips';
 const TIPS: Partial<Record<PromptKind, { title: string; text: string }>> = {
   move: {
     title: 'Moving',
-    text: 'Click a glowing street space on the map, or pick from the list. The title shows how many movement points are left. Choose "End movement" to stop early.',
+    text: 'Every space you can still reach glows. Click a nearby one to take a single step, or a faint one further away to walk the whole route at once (hover to see it). Entering a location or meeting a monster ends the move. Choose "Stop here" to stop early.',
   },
   destination: { title: 'Choosing a destination', text: 'Pick one of the glowing places on the map, or choose from the list below.' },
   orient: {

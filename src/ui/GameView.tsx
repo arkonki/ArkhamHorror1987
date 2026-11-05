@@ -54,6 +54,37 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
   };
   const fresh = state.rolls.filter((r) => (r.seq ?? 0) > seenSeq);
 
+  // Multi-space moves: clicking a space further away walks there one step (one answer) at a time,
+  // so undo, saves and online replay see exactly the same answers as clicking each space.
+  const walkPlan = useRef<{ inv: string; at: string; steps: string[] } | null>(null);
+  const onBoardNode = (n: string) => {
+    const reach = prompt?.kind === 'move' ? (prompt.data?.reach as Record<string, string[]> | undefined) : undefined;
+    const path = reach?.[n];
+    if (prompt?.inv && path && path.length > 1) {
+      walkPlan.current = { inv: prompt.inv, at: path[0], steps: path.slice(1) };
+      answer(path[0]);
+      return;
+    }
+    walkPlan.current = null;
+    answer(n);
+  };
+  useEffect(() => {
+    const plan = walkPlan.current;
+    if (!plan) return;
+    if (!prompt || prompt.kind !== 'move' || prompt.inv !== plan.inv) { walkPlan.current = null; return; }
+    if (!client.canAnswer(prompt)) return; // online: waiting for the server to echo the last step
+    const next = plan.steps[0];
+    if (prompt.data?.from !== plan.at || !next || !prompt.nodes?.includes(next)) { walkPlan.current = null; return; }
+    const t = setTimeout(() => {
+      if (walkPlan.current !== plan) return;
+      plan.steps.shift();
+      plan.at = next;
+      if (!plan.steps.length) walkPlan.current = null;
+      answer(next);
+    }, 140);
+    return () => clearTimeout(t);
+  }, [snap.version]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const download = () => {
     const blob = new Blob([JSON.stringify(client.save())], { type: 'application/json' });
     const a = document.createElement('a');
@@ -92,13 +123,13 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
         <main className="relative flex flex-1 flex-col gap-2 p-2 pb-[48vh] lg:min-h-0 lg:pb-2">
           <div className="flex flex-1 flex-col gap-2 lg:min-h-0 lg:flex-row">
             <section className="min-h-[60vh] min-w-0 lg:min-h-0 lg:flex-1">
-              <Board state={state} prompt={prompt && client.canAnswer(prompt) ? prompt : null} onNode={(n) => answer(n)} onPickInv={(id) => { setPicked(id); if (dock === 'hidden') setDockMode('compact'); }} />
+              <Board state={state} prompt={prompt && client.canAnswer(prompt) ? prompt : null} onNode={onBoardNode} onPickInv={(id) => { setPicked(id); if (dock === 'hidden') setDockMode('compact'); }} />
             </section>
             <aside className="flex w-full flex-col lg:min-h-0 lg:w-[clamp(320px,23vw,390px)]">
               <div className="fixed inset-x-0 bottom-0 z-30 flex max-h-[46vh] flex-col gap-2 overflow-y-auto rounded-t-xl border-t border-amber-200/30 bg-stone-900/95 p-3 shadow-2xl backdrop-blur lg:static lg:max-h-none lg:min-h-0 lg:flex-1 lg:rounded-xl lg:border lg:border-amber-200/25 lg:bg-stone-900/90">
                 <DiceTray rolls={fresh} onDismiss={() => setSeenSeq(state.rollSeq)} />
                 {!prompt ? <GameOver state={state} onQuit={onQuit} />
-                  : client.canAnswer(prompt) || !waiting ? <PromptPanel state={state} prompt={prompt} onAnswer={answer} />
+                  : client.canAnswer(prompt) || !waiting ? <PromptPanel state={state} prompt={prompt} onAnswer={(a) => { walkPlan.current = null; answer(a); }} />
                   : waiting(state, prompt)}
               </div>
             </aside>

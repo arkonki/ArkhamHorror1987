@@ -53,6 +53,16 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
     if (mode === 'online') onHost(setup, name.trim());
     else onStart(setup);
   };
+  /** Hotseat shortcut: the suggested number of random investigators, split evenly, default rules. */
+  const quickStart = () => {
+    const ids = [...INVESTIGATORS].sort(() => Math.random() - 0.5).slice(0, suggested(players.length)).map((d) => d.id);
+    onStart({
+      seed: Math.floor(Math.random() * 2 ** 31),
+      players: players.map((p) => ({ name: p })),
+      investigators: ids.map((defId, i) => ({ defId, player: i % players.length, str: 5 })),
+      options,
+    });
+  };
   const seatsWithoutInvestigator = players.filter((_, i) => !picks.some((p) => p.player === i));
   const canStart = picks.length > 0 && (mode === 'hotseat' || (!!name.trim() && seatsWithoutInvestigator.length === 0));
   const addPlayer = () => {
@@ -78,13 +88,22 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
         <p className="mt-1 text-stone-400">The Boardgame for Monster-Hunters · Chaosium 1987</p>
       </header>
 
-      {onResume && (
-        <div className="mb-6 flex justify-center">
+      <div className="mb-6 flex flex-wrap justify-center gap-3">
+        {onResume && (
           <button onClick={onResume} className="rounded-md border border-amber-300/60 bg-amber-200/10 px-5 py-2 text-amber-100 hover:bg-amber-200/25">
             Resume saved game
           </button>
-        </div>
-      )}
+        )}
+        {mode === 'hotseat' && (
+          <button
+            onClick={quickStart}
+            className="rounded-md border border-amber-300 bg-amber-300 px-5 py-2 font-semibold text-stone-900 hover:bg-amber-200"
+            title={`Start now with ${suggested(players.length)} random investigators and the default rules`}
+          >
+            Quick start — {suggested(players.length)} random investigators
+          </button>
+        )}
+      </div>
 
       <div className="mb-6 flex justify-center gap-1 rounded-lg border border-stone-700 bg-stone-900/60 p-1" role="tablist">
         {tab('hotseat', 'Hotseat (one screen)')}
@@ -160,7 +179,12 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
       </section>
 
       <section className="mb-6">
-        <h2 className="mb-2 font-display text-xl text-amber-50">Investigators</h2>
+        <h2 className="mb-2 font-display text-xl text-amber-50">
+          Investigators{' '}
+          <span className="font-sans text-sm text-stone-400">
+            {picks.length ? `${picks.length} chosen` : `click sheets to choose — the rules suggest ${suggested(players.length)}`}
+          </span>
+        </h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {INVESTIGATORS.map((d) => {
             const pick = picks.find((p) => p.defId === d.id);
@@ -220,6 +244,9 @@ export function Setup({ onStart, onHost, onJoin, defaultName, defaultRoom, onRes
         </label>
       </section>
 
+      {mode === 'hotseat' && !canStart && (
+        <p className="mb-2 text-center text-sm text-stone-400">Choose at least one investigator above to begin, or use Quick start.</p>
+      )}
       <div className="flex items-center justify-center gap-3">
         {mode === 'hotseat' && (
           <button disabled={!canStart} onClick={start} className="rounded-md border border-amber-300 bg-amber-300 px-6 py-2 font-semibold text-stone-900 disabled:opacity-40">

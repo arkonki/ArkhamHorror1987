@@ -78,7 +78,13 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const drag = useRef<{ x: number; y: number; sl: number; st: number; moved: boolean } | null>(null);
-  const clickable = new Set(prompt?.nodes ?? []);
+  const near = new Set(prompt?.nodes ?? []);
+  // During a walk every space reachable with the remaining points lights up (fainter when further).
+  const reach = prompt?.kind === 'move' && near.size ? (prompt.data?.reach as Record<string, string[]> | undefined) ?? {} : {};
+  const clickable = new Set([...near, ...Object.keys(reach)]);
+  const far = (id: string) => !near.has(id) && !!reach[id];
+  const fill = (id: string, hot: number, base: number) =>
+    `rgba(250,204,21,${hover === id ? hot : far(id) ? base * 0.45 : base})`;
 
   const tipProps = (t: Tip) => ({
     onMouseEnter: (e: ReactMouse) => { mouse.current = { x: e.clientX, y: e.clientY }; setTip(t); },
@@ -180,9 +186,10 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
             <polygon
               key={s.id}
               points={s.poly.map((p) => p.join(',')).join(' ')}
-              fill={on ? (hover === s.id ? 'rgba(250,204,21,0.55)' : 'rgba(250,204,21,0.3)') : 'transparent'}
+              fill={on ? fill(s.id, 0.55, 0.3) : 'transparent'}
               stroke={on ? '#facc15' : 'none'}
-              strokeWidth={8}
+              strokeWidth={far(s.id) ? 4 : 8}
+              strokeDasharray={far(s.id) ? '18 12' : undefined}
               style={{ cursor: on ? 'pointer' : 'default' }}
               onMouseEnter={(e) => { setHover(s.id); tipProps({ kind: 'street', id: s.id }).onMouseEnter(e); }}
               onMouseLeave={() => { setHover(null); tipProps({ kind: 'street', id: s.id }).onMouseLeave(); }}
@@ -195,10 +202,24 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
           const on = clickable.has(id);
           return (
             <g key={loc} onClick={() => on && onNode(id)} style={{ cursor: on ? 'pointer' : 'default' }} onMouseEnter={(e) => { setHover(id); tipProps({ kind: 'loc', id }).onMouseEnter(e); }} onMouseLeave={() => { setHover(null); tipProps({ kind: 'loc', id }).onMouseLeave(); }}>
-              <circle cx={p.x} cy={p.y} r={95} fill={on ? (hover === id ? 'rgba(250,204,21,0.5)' : 'rgba(250,204,21,0.25)') : 'transparent'} stroke={on ? '#facc15' : 'none'} strokeWidth={10} />
+              <circle cx={p.x} cy={p.y} r={95} fill={on ? fill(id, 0.5, 0.25) : 'transparent'} stroke={on ? '#facc15' : 'none'} strokeWidth={far(id) ? 5 : 10} strokeDasharray={far(id) ? '20 14' : undefined} />
             </g>
           );
         })}
+
+        {/* Route preview for a multi-space move */}
+        {hover && reach[hover] && reach[hover].length > 1 && (() => {
+          const from = (prompt?.data?.from as string | undefined);
+          const pts = [from, ...reach[hover]].filter(Boolean).map((n) => nodePos(n as string));
+          const end = pts[pts.length - 1];
+          return (
+            <g pointerEvents="none">
+              <polyline points={pts.map((q) => `${q.x},${q.y}`).join(' ')} fill="none" stroke="#fde047" strokeWidth={16} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 30" />
+              <circle cx={end.x} cy={end.y - 95} r={42} fill="#1c1917" stroke="#fde047" strokeWidth={6} />
+              <text x={end.x} y={end.y - 80} fontSize={46} textAnchor="middle" fill="#fde047" fontWeight={700}>{reach[hover].length}</text>
+            </g>
+          );
+        })()}
 
         {/* Elder Signs */}
         {state.elderSigns.map((loc) => {

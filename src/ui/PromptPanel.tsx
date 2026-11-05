@@ -179,7 +179,13 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
           <div className="min-w-0 flex-1"><MonsterFacts d={MONSTER_BY_ID[orientMonster]} compact /></div>
         </div>
       )}
-      {isMap && <p className="mb-2 rounded bg-amber-200/10 px-2 py-1 text-sm text-amber-100">👆 Click a glowing space on the map, or pick below.</p>}
+      {isMap && (
+        <p className="mb-2 rounded bg-amber-200/10 px-2 py-1 text-sm text-amber-100">
+          {prompt.kind === 'move' && prompt.data?.reach && Object.keys(prompt.data.reach as object).length > (prompt.nodes?.length ?? 0)
+            ? '👆 Click any glowing space — the faint ones are further away and you walk there in one go. Or pick a single step below.'
+            : '👆 Click a glowing space on the map, or pick below.'}
+        </p>
+      )}
       <div className={`grid gap-2 ${isMap && prompt.options.length > 8 ? 'max-h-72 overflow-y-auto pr-1' : ''}`}>
         {prompt.options.map((o, i) => (
           <button
