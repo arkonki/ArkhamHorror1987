@@ -94,21 +94,22 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
     URL.revokeObjectURL(a.href);
   };
 
-  const btn = 'rounded border border-stone-600 px-2.5 py-1 text-sm text-stone-300 hover:bg-stone-800 disabled:opacity-40';
+  const btn = 'shrink-0 whitespace-nowrap rounded border border-stone-600 px-2 py-0.5 text-sm text-stone-300 hover:bg-stone-800 disabled:opacity-40 sm:px-2.5 sm:py-1';
   const unread = Math.max(0, state.log.length - seenLog);
   const openLog = () => { setShowLog(true); setSeenLog(state.log.length); };
   return (
     <ZoomProvider>
       <div className="flex min-h-screen flex-col lg:h-screen">
-        <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-stone-800 bg-stone-950/80 px-3 py-1.5">
-          <h1 className="font-display text-xl text-amber-100">Arkham Horror</h1>
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-stone-800 bg-stone-950/80 px-2 py-1 sm:gap-x-4 sm:px-3 sm:py-1.5">
+          <h1 className="hidden font-display text-xl text-amber-100 sm:block">Arkham Horror</h1>
           <span className="text-sm text-stone-400">
-            Turn {state.turn} · {state.phase === 'mythos' ? 'Mythos Phase' : state.phase === 'over' ? 'Game over' : 'Investigator Phase'}
+            Turn {state.turn}<span className="hidden sm:inline"> · {state.phase === 'mythos' ? 'Mythos Phase' : state.phase === 'over' ? 'Game over' : 'Investigator Phase'}</span>
+            <span className="sm:hidden"> · {state.phase === 'mythos' ? 'Mythos' : state.phase === 'over' ? 'Over' : 'Investigators'}</span>
           </span>
           <span className="text-sm text-red-300">Doom {state.doom}/13</span>
-          <span className="text-sm text-purple-300">Open gates {Object.values(state.gates).filter((g) => g.location).length}</span>
+          <span className="text-sm text-purple-300"><span className="hidden sm:inline">Open gates</span><span className="sm:hidden">Gates</span> {Object.values(state.gates).filter((g) => g.location).length}</span>
           {headerExtra}
-          <div className="ml-auto flex gap-2">
+          <div className="-mx-2 flex w-[calc(100%+1rem)] gap-1.5 overflow-x-auto px-2 sm:mx-0 sm:ml-auto sm:w-auto sm:gap-2 sm:overflow-visible sm:px-0">
             <button className={`${btn} relative`} onClick={() => (showLog ? setShowLog(false) : openLog())} aria-expanded={showLog}>
               Log{chat ? ' & chat' : ''}
               {unread > 0 && !showLog && <span className="absolute -right-1.5 -top-1.5 rounded-full bg-amber-300 px-1.5 text-[10px] font-bold text-stone-900">{unread > 99 ? '99+' : unread}</span>}
@@ -116,7 +117,7 @@ export function GameView({ client, onQuit, headerExtra, waiting, chat }: Props) 
             <button className={btn} onClick={() => setShowRef(true)}>Reference</button>
             <SoundToggle className={btn} />
             <button className={btn} disabled={!client.canUndo()} onClick={() => client.undo()} title="Take back your last decision">Undo</button>
-            <button className={btn} onClick={download}>Save file</button>
+            <button className={btn} onClick={download}>Save<span className="hidden sm:inline"> file</span></button>
             <button className={btn} onClick={onQuit}>Menu</button>
           </div>
         </header>

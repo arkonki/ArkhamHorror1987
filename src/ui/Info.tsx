@@ -145,7 +145,7 @@ export function HoverCard({ pos, children }: { pos: RefObject<{ x: number; y: nu
 export function DoomTrack({ doom, spells, items, gates }: { doom: number; spells: number; items: number; gates: number }) {
   const cells = Array.from({ length: 13 }, (_, i) => 13 - i);
   return (
-    <div className="flex w-11 shrink-0 flex-col items-center gap-1 rounded-lg bg-stone-950/80 py-1.5" aria-label={`Doom track: ${doom} of 13`}>
+    <div className="hidden w-11 shrink-0 flex-col items-center gap-1 rounded-lg bg-stone-950/80 py-1.5 sm:flex" aria-label={`Doom track: ${doom} of 13`}>
       <div className="text-[9px] font-bold uppercase leading-none tracking-wider text-red-300">Doom</div>
       <div className="flex min-h-0 flex-1 flex-col gap-px">
         {cells.map((n) => {

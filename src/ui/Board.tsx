@@ -154,9 +154,9 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
   return (
     <div className="relative flex w-full min-w-0 gap-1.5 lg:h-full">
       <DoomTrack doom={state.doom} spells={state.spellDeck.length} items={state.itemDeck.length} gates={state.gateDeck.length} />
-      <div className="absolute left-14 top-3 z-10 flex items-center gap-1 rounded-lg bg-stone-950/80 p-1 shadow-lg backdrop-blur">
+      <div className="absolute bottom-1 left-1 z-10 flex items-center gap-0.5 rounded-lg bg-stone-950/80 p-0.5 shadow-lg backdrop-blur sm:bottom-auto sm:left-14 sm:top-3 sm:gap-1 sm:p-1">
         {ZOOMS.map((z) => (
-          <button key={z} onClick={() => setZoom(z)} className={`rounded px-2.5 py-1 text-sm ${zoom === z ? 'bg-amber-200 font-bold text-stone-900' : 'text-stone-200 hover:bg-stone-800'}`}>
+          <button key={z} onClick={() => setZoom(z)} className={`rounded px-1.5 py-0.5 text-xs sm:px-2.5 sm:py-1 sm:text-sm ${zoom === z ? 'bg-amber-200 font-bold text-stone-900' : 'text-stone-200 hover:bg-stone-800'}`}>
             {z === 1 ? 'Fit' : `${z}×`}
           </button>
         ))}
@@ -164,7 +164,7 @@ export function Board({ state, prompt, onNode, onPickInv }: Props) {
           onClick={() => activePoint && (zoom === 1 ? setZoom(1.8) : centerOn(activePoint))}
           disabled={!activePoint}
           title="Center the map on the active investigator"
-          className="rounded px-2.5 py-1 text-sm text-stone-200 hover:bg-stone-800 disabled:opacity-40"
+          className="rounded px-1.5 py-0.5 text-xs text-stone-200 hover:bg-stone-800 disabled:opacity-40 sm:px-2.5 sm:py-1 sm:text-sm"
         >
           ◎ Active
         </button>

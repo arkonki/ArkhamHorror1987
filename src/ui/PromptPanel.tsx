@@ -166,7 +166,7 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
   const orientMonster = prompt.kind === 'orient' ? (prompt.data?.monster as string | undefined) : undefined;
   const isMap = prompt.kind === 'move' || prompt.kind === 'destination' || prompt.kind === 'orient';
   return (
-    <div>
+    <div className="flex flex-col">
       {header}
       {card && (
         <button onClick={() => zoom({ title: 'Card', images: [cardUrl(card)] })} aria-label="Enlarge card">
@@ -174,7 +174,7 @@ export function PromptPanel({ state, prompt, onAnswer }: Props) {
         </button>
       )}
       {orientMonster && (
-        <div className="mb-3 flex items-start gap-3 rounded-lg bg-stone-950/60 p-2">
+        <div className="order-last mt-3 flex items-start gap-3 rounded-lg bg-stone-950/60 p-2 lg:order-none lg:mb-3 lg:mt-0">
           <img src={monsterUrl(MONSTER_BY_ID[orientMonster].art, 'back')} alt="" className="h-20 w-20 shrink-0" />
           <div className="min-w-0 flex-1"><MonsterFacts d={MONSTER_BY_ID[orientMonster]} compact /></div>
         </div>
