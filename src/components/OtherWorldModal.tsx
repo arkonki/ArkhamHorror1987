@@ -21,7 +21,7 @@ export const OtherWorldModal: React.FC<OtherWorldModalProps> = ({
   if (!world) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
       <div
         className="text-[#f5ecd8] border-3 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl"
         style={{ backgroundColor: '#1c131a', borderColor: world.color }}

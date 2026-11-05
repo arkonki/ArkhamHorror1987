@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Gate, Investigator, OtherWorld } from '../types/game';
 import { OTHER_WORLDS, LOCATIONS_DATA } from '../data/rules1987';
-import { rollD6 } from '../game/engine';
+import { rollD6, getEffectiveStats, getBestWeaponBonus } from '../game/engine';
 import { Sparkles, Shield, Sword, Eye, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
 
 interface GateModalProps {
@@ -10,6 +10,7 @@ interface GateModalProps {
   onEnterGate: () => void;
   onDestroyGate: () => void;
   onSealWithElderSign: () => void;
+  onAttackFailed: () => void;
   onClose: () => void;
 }
 
@@ -19,6 +20,7 @@ export const GateModal: React.FC<GateModalProps> = ({
   onEnterGate,
   onDestroyGate,
   onSealWithElderSign,
+  onAttackFailed,
   onClose
 }) => {
   const otherWorld = OTHER_WORLDS[gate.otherWorldId as keyof typeof OTHER_WORLDS];
@@ -26,22 +28,20 @@ export const GateModal: React.FC<GateModalProps> = ({
   const hasElderSign = investigator.items.some(i => i.specialEffect === 'seal_gate');
   const [destroyRoll, setDestroyRoll] = useState<{ roll: number; total: number; success: boolean } | null>(null);
 
+  const fightBonus = getEffectiveStats(investigator).fight + getBestWeaponBonus(investigator);
+
   const handleDestroyAttempt = () => {
+    if (destroyRoll) return;
     const roll = rollD6();
-    const total = roll + investigator.stats.fightSkill;
+    const total = roll + fightBonus;
     const success = total >= gate.strength;
     setDestroyRoll({ roll, total, success });
-
-    if (success) {
-      setTimeout(() => {
-        onDestroyGate();
-      }, 1200);
-    }
+    setTimeout(() => (success ? onDestroyGate() : onAttackFailed()), 1300);
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#1c121e] text-[#f5ecd8] border-3 border-purple-500 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true">
+      <div className="bg-[#1c121e] text-[#f5ecd8] border-3 border-purple-500 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl">
         {/* Header */}
         <div className="bg-gradient-to-r from-purple-950 via-[#381647] to-purple-950 p-4 border-b border-purple-700 flex items-center justify-between">
           <div className="flex items-center gap-2 text-purple-200 font-serif font-bold text-xl">
@@ -69,13 +69,14 @@ export const GateModal: React.FC<GateModalProps> = ({
             {/* Option 1: Step Through the Gate */}
             <button
               onClick={onEnterGate}
-              className="w-full bg-gradient-to-r from-purple-800 to-indigo-900 hover:from-purple-700 hover:to-indigo-800 text-white font-bold p-3.5 rounded-xl shadow-lg transition flex items-center justify-between text-sm"
+              disabled={!!destroyRoll}
+              className="disabled:opacity-50 w-full bg-gradient-to-r from-purple-800 to-indigo-900 hover:from-purple-700 hover:to-indigo-800 text-white font-bold p-3.5 rounded-xl shadow-lg transition flex items-center justify-between text-sm"
             >
               <div className="flex items-center gap-2.5 text-left">
                 <Eye className="w-5 h-5 text-purple-300" />
                 <div>
                   <div className="font-bold">Step Through the Gate</div>
-                  <div className="text-[11px] text-purple-200 font-normal">Explore {otherWorld?.name} (Transit to Box 2)</div>
+                  <div className="text-[11px] text-purple-200 font-normal">Explore {otherWorld?.name}: 2 turns of encounters, then return to Arkham</div>
                 </div>
               </div>
               <ArrowRight className="w-5 h-5 text-purple-300" />
@@ -85,13 +86,14 @@ export const GateModal: React.FC<GateModalProps> = ({
             <div className="bg-[#241724] p-3 rounded-xl border border-purple-900/60">
               <button
                 onClick={handleDestroyAttempt}
-                className="w-full bg-gradient-to-r from-rose-900 to-red-950 hover:from-rose-800 hover:to-red-900 text-white font-bold py-2.5 px-4 rounded-lg shadow transition flex items-center justify-between text-sm"
+                disabled={!!destroyRoll}
+                className="disabled:opacity-60 w-full bg-gradient-to-r from-rose-900 to-red-950 hover:from-rose-800 hover:to-red-900 text-white font-bold py-2.5 px-4 rounded-lg shadow transition flex items-center justify-between text-sm"
               >
                 <div className="flex items-center gap-2">
                   <Sword className="w-4 h-4 text-rose-300" />
                   <span>Attack Gate (Fight Roll vs {gate.strength} SP)</span>
                 </div>
-                <span className="text-xs text-rose-300">Roll D6 + Fight (+{investigator.stats.fightSkill})</span>
+                <span className="text-xs text-rose-300">D6 + {fightBonus} (Fight + best weapons) · one try per turn</span>
               </button>
 
               {destroyRoll && (
@@ -99,7 +101,7 @@ export const GateModal: React.FC<GateModalProps> = ({
                   destroyRoll.success ? 'bg-emerald-950 text-emerald-300 border border-emerald-700' : 'bg-rose-950 text-rose-300 border border-rose-700'
                 }`}>
                   {destroyRoll.success ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-rose-400" />}
-                  Roll: {destroyRoll.roll} + {investigator.stats.fightSkill} = <strong>{destroyRoll.total}</strong> ({destroyRoll.success ? 'Success! Gate Shattered!' : 'Failed! Gate resists.'})
+                  Roll: {destroyRoll.roll} + {fightBonus} = <strong>{destroyRoll.total}</strong> ({destroyRoll.success ? 'Success! Gate Shattered!' : 'Failed! The gate resists — your turn ends.'})
                 </div>
               )}
             </div>
@@ -130,6 +132,7 @@ export const GateModal: React.FC<GateModalProps> = ({
           <div className="pt-2 flex justify-end">
             <button
               onClick={onClose}
+              disabled={!!destroyRoll}
               className="text-xs text-purple-300 hover:text-white underline transition"
             >
               Step back onto sidewalk

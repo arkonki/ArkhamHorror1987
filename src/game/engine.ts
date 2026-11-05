@@ -3,8 +3,8 @@ import {
   GameState,
   Investigator,
   InvestigatorColor,
+  LogMessage,
   Monster,
-  TurnPhase,
   Gate,
   OtherWorldId
 } from '../types/game';
@@ -19,12 +19,31 @@ import {
 } from '../data/rules1987';
 import {
   BOARD_NODES,
-  BOARD_ADJACENCY,
   getNeighbors,
   getReachableNodes,
-  getLocationIdForNode,
-  getNodeForLocation
+  findShortestPath,
+  getNodeForLocation,
+  getNodeDisplayLabel
 } from '../data/boardGraph';
+
+export const WORLD_KEYS: OtherWorldId[] = [
+  'abyss',
+  'another_dimension',
+  'city_of_great_race',
+  'earths_dreamlands',
+  'great_hall_of_celeano',
+  'plateau_of_leng',
+  'rlyeh',
+  'yuggoth'
+];
+
+const MAX_LOG_ENTRIES = 250;
+
+let uid = 0;
+export function makeId(prefix: string): string {
+  uid += 1;
+  return `${prefix}_${Date.now().toString(36)}_${uid}`;
+}
 
 export function rollD6(): number {
   return Math.floor(Math.random() * 6) + 1;
@@ -45,11 +64,215 @@ export function shuffle<T>(array: T[]): T[] {
   return arr;
 }
 
+// -------------------------------------------------------------
+// Small immutable state helpers
+// -------------------------------------------------------------
+export function addLog(state: GameState, text: string, type: LogMessage['type'] = 'action'): GameState {
+  const entry: LogMessage = { id: makeId('log'), timestamp: `T${state.turnNumber}`, type, text };
+  const log = [...state.log, entry];
+  return { ...state, log: log.length > MAX_LOG_ENTRIES ? log.slice(-MAX_LOG_ENTRIES) : log };
+}
+
+export function getInvestigatorIndex(state: GameState, investigatorId: string): number {
+  return state.investigators.findIndex(i => i.id === investigatorId);
+}
+
+export function patchInvestigator(
+  state: GameState,
+  idx: number,
+  fn: (inv: Investigator) => Investigator
+): GameState {
+  if (idx < 0 || idx >= state.investigators.length) return state;
+  const investigators = state.investigators.map((inv, i) => (i === idx ? fn(inv) : inv));
+  return { ...state, investigators };
+}
+
+export function getEffectiveStats(inv: Investigator) {
+  const has = (id: string) => inv.skills.some(s => s.id === id);
+  return {
+    fight: inv.stats.fightSkill + (has('skill_fight') ? 1 : 0),
+    sneak: inv.stats.sneakSkill + (has('skill_sneak') ? 1 : 0),
+    knowledge: inv.stats.knowledgeSkill + (has('skill_knowledge') ? 1 : 0),
+    fastTalk: inv.stats.fastTalkSkill + (has('skill_fast_talk') ? 1 : 0)
+  };
+}
+
+/** Monsters an investigator in Arkham must deal with on their current space. */
+export function getThreateningMonsters(state: GameState, inv: Investigator | undefined): Monster[] {
+  if (!inv || inv.otherWorldState) return [];
+  return state.activeMonsters.filter(
+    m => m.currentNodeId === inv.locationNodeId && !state.evadedMonsterIds.includes(m.id)
+  );
+}
+
+/** Best weapon bonus usable with two hands (used for attacking gates). */
+export function getBestWeaponBonus(inv: Investigator): number {
+  const weapons = inv.items.filter(i => (i.fightBonus || 0) > 0);
+  let best = 0;
+  for (let a = 0; a < weapons.length; a++) {
+    const wa = weapons[a];
+    if ((wa.hands || 1) === 2) {
+      best = Math.max(best, wa.fightBonus || 0);
+      continue;
+    }
+    best = Math.max(best, wa.fightBonus || 0);
+    for (let b = a + 1; b < weapons.length; b++) {
+      const wb = weapons[b];
+      if ((wb.hands || 1) === 1) best = Math.max(best, (wa.fightBonus || 0) + (wb.fightBonus || 0));
+    }
+  }
+  return best;
+}
+
+// -------------------------------------------------------------
+// Decks
+// -------------------------------------------------------------
+export function drawItems(state: GameState, idx: number, count: number): { state: GameState; drawn: Card[] } {
+  let deck = state.itemDeck;
+  let discards = state.discardedItems;
+  if (deck.length < count && discards.length > 0) {
+    deck = [...deck, ...shuffle(discards)];
+    discards = [];
+  }
+  const drawn = deck.slice(0, count);
+  let next: GameState = { ...state, itemDeck: deck.slice(count), discardedItems: discards };
+  next = patchInvestigator(next, idx, inv => ({ ...inv, items: [...inv.items, ...drawn] }));
+  return { state: next, drawn };
+}
+
+export function drawSpells(state: GameState, idx: number, count: number): { state: GameState; drawn: Card[] } {
+  let deck = state.spellDeck;
+  let discards = state.discardedSpells;
+  if (deck.length < count && discards.length > 0) {
+    deck = [...deck, ...shuffle(discards)];
+    discards = [];
+  }
+  const drawn = deck.slice(0, count);
+  let next: GameState = { ...state, spellDeck: deck.slice(count), discardedSpells: discards };
+  next = patchInvestigator(next, idx, inv => ({ ...inv, spells: [...inv.spells, ...drawn] }));
+  return { state: next, drawn };
+}
+
+export function discardRandomCard(
+  state: GameState,
+  idx: number,
+  kind: 'item' | 'spell'
+): { state: GameState; lost?: Card } {
+  const inv = state.investigators[idx];
+  if (!inv) return { state };
+  const pile = kind === 'item' ? inv.items : inv.spells;
+  if (pile.length === 0) return { state };
+  const lost = pile[Math.floor(Math.random() * pile.length)];
+  let next = patchInvestigator(state, idx, i =>
+    kind === 'item'
+      ? { ...i, items: i.items.filter(c => c.id !== lost.id) }
+      : { ...i, spells: i.spells.filter(c => c.id !== lost.id) }
+  );
+  next =
+    kind === 'item'
+      ? { ...next, discardedItems: [...next.discardedItems, lost] }
+      : { ...next, discardedSpells: [...next.discardedSpells, lost] };
+  return { state: next, lost };
+}
+
+// -------------------------------------------------------------
+// Monsters & gates
+// -------------------------------------------------------------
+export function spawnMonsterAtNode(state: GameState, nodeId: string): { state: GameState; monster?: Monster } {
+  if (state.monsterCup.length === 0) {
+    return { state: addLog(state, 'The monster cup is empty — no further horrors can emerge.', 'mythos') };
+  }
+  const cup = [...state.monsterCup];
+  const drawn = cup.pop()!;
+  const monster: Monster = { ...drawn, currentNodeId: nodeId, prevNodeId: undefined };
+  return {
+    state: { ...state, monsterCup: cup, activeMonsters: [...state.activeMonsters, monster] },
+    monster
+  };
+}
+
+export function spawnMonsterAtLocation(state: GameState, locId: string): { state: GameState; monster?: Monster } {
+  const nodeId = getNodeForLocation(locId);
+  if (!nodeId) return { state };
+  const res = spawnMonsterAtNode(state, nodeId);
+  if (res.monster) {
+    res.state = addLog(
+      res.state,
+      `${res.monster.name} (SP ${res.monster.strength}) appears at ${LOCATIONS_DATA[locId]?.name || locId}!`,
+      'mythos'
+    );
+  }
+  return res;
+}
+
+/** Opens a gate at a location (doom +1) and brings a monster through. If a gate is already open there, only a monster appears. */
+export function openGateAt(state: GameState, locId: string): GameState {
+  const loc = LOCATIONS_DATA[locId];
+  if (!loc) return state;
+
+  if (state.openGates.some(g => g.locationId === locId)) {
+    const next = addLog(state, `The gate at ${loc.name} pulses — another horror slips through!`, 'mythos');
+    return spawnMonsterAtLocation(next, locId).state;
+  }
+
+  const world = WORLD_KEYS[Math.floor(Math.random() * WORLD_KEYS.length)];
+  const gate: Gate = { id: makeId('gate'), locationId: locId, otherWorldId: world, strength: 5 };
+  let next: GameState = {
+    ...state,
+    openGates: [...state.openGates, gate],
+    doomTrack: Math.min(state.maxDoom, state.doomTrack + 1)
+  };
+  next = addLog(next, `A gate tears open at ${loc.name}, leading to ${OTHER_WORLDS[world].name}! Doom rises to ${next.doomTrack}.`, 'mythos');
+  return spawnMonsterAtLocation(next, locId).state;
+}
+
+export function removeGate(state: GameState, gateId: string, idx: number, sealed: boolean): GameState {
+  const gate = state.openGates.find(g => g.id === gateId);
+  if (!gate) return state;
+  let next: GameState = { ...state, openGates: state.openGates.filter(g => g.id !== gateId) };
+  next = patchInvestigator(next, idx, inv => ({
+    ...inv,
+    trophies: { ...inv.trophies, gates: [...inv.trophies.gates, { ...gate, isSealedWithElderSign: sealed }] }
+  }));
+  if (sealed) next = { ...next, doomTrack: Math.max(1, next.doomTrack - 1) };
+  return next;
+}
+
+/** Investigator loses all strength or sanity: sent to hospital / sanitarium. */
+export function knockOut(state: GameState, idx: number, cause: 'strength' | 'sanity'): GameState {
+  const inv = state.investigators[idx];
+  if (!inv) return state;
+  const toHospital = cause === 'strength';
+  const nodeId = toHospital ? 'LOC_HOSPITAL' : 'LOC_SANITARIUM';
+  let next = patchInvestigator(state, idx, i => ({
+    ...i,
+    locationNodeId: nodeId,
+    otherWorldState: undefined,
+    strength: toHospital ? 1 : Math.max(1, i.strength),
+    sanity: toHospital ? Math.max(1, i.sanity) : 1,
+    isInHospital: toHospital,
+    isInSanitarium: !toHospital
+  }));
+  const res = discardRandomCard(next, idx, toHospital ? 'item' : 'spell');
+  next = res.state;
+  next = addLog(
+    next,
+    `${inv.name} ${toHospital ? 'collapses and is carried to St. Mary\'s Hospital' : 'goes mad and is committed to Arkham Sanitarium'}${
+      res.lost ? ` (lost ${res.lost.name})` : ''
+    }.`,
+    'combat'
+  );
+  return next;
+}
+
+// -------------------------------------------------------------
+// Setup
+// -------------------------------------------------------------
 export function createInvestigator(
   name: string,
   color: InvestigatorColor,
   startingStrength: number = 5,
-  startingSanity: number = 5,
+  _startingSanity: number = 5,
   itemDeck: Card[],
   spellDeck: Card[],
   skillDeck: Card[]
@@ -58,17 +281,8 @@ export function createInvestigator(
   const str = Math.max(3, Math.min(7, startingStrength));
   const san = Math.max(3, Math.min(7, 10 - str));
 
-  const items = itemDeck.slice(0, 3);
-  const remainingItems = itemDeck.slice(3);
-
-  const spells = spellDeck.slice(0, 1);
-  const remainingSpells = spellDeck.slice(1);
-
-  const skills = skillDeck.slice(0, 1);
-  const remainingSkills = skillDeck.slice(1);
-
   const investigator: Investigator = {
-    id: `inv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    id: makeId('inv'),
     name,
     color,
     maxStrength: str,
@@ -77,25 +291,22 @@ export function createInvestigator(
     sanity: san,
     money: 13, // 1987 rule: deal $13 from the bank
     hasRetainer: false,
-    locationNodeId: 'LOC_TRAIN_STATION', // Rule: Place investigator tokens in play at the Train Station
-    items,
-    spells,
-    skills,
+    locationNodeId: 'LOC_TRAIN_STATION', // Rule: investigators start at the Train Station
+    items: itemDeck.slice(0, 3),
+    spells: spellDeck.slice(0, 1),
+    skills: skillDeck.slice(0, 1),
     hasCharityCard: true,
     charityRepaid: true,
-    trophies: {
-      monsters: [],
-      gates: []
-    },
-    stats: {
-      fightSkill: 3,
-      sneakSkill: 3,
-      knowledgeSkill: 3,
-      fastTalkSkill: 3
-    }
+    trophies: { monsters: [], gates: [] },
+    stats: { fightSkill: 3, sneakSkill: 3, knowledgeSkill: 3, fastTalkSkill: 3 }
   };
 
-  return { investigator, remainingItems, remainingSpells, remainingSkills };
+  return {
+    investigator,
+    remainingItems: itemDeck.slice(3),
+    remainingSpells: spellDeck.slice(1),
+    remainingSkills: skillDeck.slice(1)
+  };
 }
 
 export function initializeGame(
@@ -126,52 +337,32 @@ export function initializeGame(
     skillDeck = res.remainingSkills;
   }
 
-  // Create monster cup
   const monsterCup: Monster[] = shuffle(
-    INITIAL_MONSTERS.map((m, idx) => ({
-      ...m,
-      id: `mon_${idx}_${Date.now()}`,
-      currentNodeId: ''
-    }))
+    INITIAL_MONSTERS.map(m => ({ ...m, id: makeId('mon'), currentNodeId: '' }))
   );
 
-  // Setup Step 7: Select top gate card / roll on Gate Appearance table
+  // Setup step 7: roll on the Gate Appearance table, open a gate and place three monsters there
   const initialGateRoll = roll2D6();
   const gateLocInfo = GATE_APPEARANCE_TABLE[initialGateRoll.sum] || GATE_APPEARANCE_TABLE[7];
-  
-  const worldKeys: OtherWorldId[] = [
-    'abyss',
-    'another_dimension',
-    'city_of_great_race',
-    'earths_dreamlands',
-    'great_hall_of_celeano',
-    'plateau_of_leng',
-    'rlyeh',
-    'yuggoth'
-  ];
-  const initialWorld = worldKeys[Math.floor(Math.random() * worldKeys.length)];
-
+  const initialWorld = WORLD_KEYS[Math.floor(Math.random() * WORLD_KEYS.length)];
   const initialGate: Gate = {
-    id: `gate_${Date.now()}`,
+    id: makeId('gate'),
     locationId: gateLocInfo.locationId,
     otherWorldId: initialWorld,
     strength: 5
   };
 
-  // Rule Step 7: Randomly select three monsters and put them face up on the gated location
   const activeMonsters: Monster[] = [];
   const locationEntryNode = getNodeForLocation(gateLocInfo.locationId) || 'LOC_TRAIN_STATION';
-
   for (let i = 0; i < 3 && monsterCup.length > 0; i++) {
     const m = monsterCup.pop()!;
-    m.currentNodeId = locationEntryNode;
-    activeMonsters.push(m);
+    activeMonsters.push({ ...m, currentNodeId: locationEntryNode });
   }
 
   return {
     isSoloMode,
     turnNumber: 1,
-    doomTrack: 1, // Rule Step 7: Put Doom Factor counter on space 1 of the doom track
+    doomTrack: 1,
     maxDoom: 14,
     investigators,
     activeInvestigatorIndex: 0,
@@ -180,6 +371,9 @@ export function initializeGame(
     movesRemaining: 0,
     hasRolledMovement: false,
     hasTakenActionThisTurn: false,
+    turnLost: false,
+    evadedMonsterIds: [],
+    usedCardIds: [],
     openGates: [initialGate],
     activeMonsters,
     monsterCup,
@@ -189,30 +383,83 @@ export function initializeGame(
     discardedItems: [],
     discardedSpells: [],
     log: [
+      { id: makeId('log'), timestamp: '1926', type: 'system', text: 'The year is 1926. A sinister past grips Arkham, Massachusetts.' },
       {
-        id: `log_${Date.now()}_1`,
-        timestamp: '1926 Arkham',
-        type: 'system',
-        text: 'The year is 1926. A sinister past grips Arkham, Massachusetts.'
-      },
-      {
-        id: `log_${Date.now()}_2`,
+        id: makeId('log'),
         timestamp: 'Setup',
         type: 'mythos',
         text: `A dimensional gate tore open at ${gateLocInfo.locationName} connecting to ${OTHER_WORLDS[initialWorld].name}! Three horrors emerged.`
       },
       {
-        id: `log_${Date.now()}_3`,
+        id: makeId('log'),
         timestamp: 'Setup',
         type: 'action',
-        text: `${investigators[0].name} arrives at the Train Station to commence the investigation.`
+        text: `The investigators arrive at the Train Station. ${investigators[0]?.name} moves first.`
       }
     ],
     chat: []
   };
 }
 
-// Graph movement validator using official boardGraph
+// -------------------------------------------------------------
+// Turn flow
+// -------------------------------------------------------------
+/** Prepares the start of an investigator's turn: income, lost turns, Other World progression. */
+export function beginInvestigatorTurn(state: GameState, idx: number): GameState {
+  let next: GameState = {
+    ...state,
+    activeInvestigatorIndex: idx,
+    currentPhase: 'INVESTIGATOR_START',
+    hasRolledMovement: false,
+    movesRemaining: 0,
+    hasTakenActionThisTurn: false,
+    turnLost: false,
+    evadedMonsterIds: [],
+    usedCardIds: []
+  };
+  const inv = next.investigators[idx];
+  if (!inv) return next;
+
+  next = addLog(next, `— ${inv.name}'s turn —`, 'system');
+
+  if (inv.hasRetainer) {
+    next = patchInvestigator(next, idx, i => ({ ...i, money: i.money + 2 }));
+    next = addLog(next, `${inv.name} collects $2 from their Retainer.`);
+  }
+
+  // Clear "just admitted" markers from last round
+  next = patchInvestigator(next, idx, i => ({ ...i, isInHospital: false, isInSanitarium: false }));
+
+  if ((inv.skipTurns || 0) > 0) {
+    next = patchInvestigator(next, idx, i => ({ ...i, skipTurns: (i.skipTurns || 1) - 1, isInJail: (i.skipTurns || 1) - 1 > 0 && i.isInJail }));
+    next = addLog(next, `${inv.name} loses this turn.`);
+    return { ...next, turnLost: true, hasTakenActionThisTurn: true, currentPhase: 'INVESTIGATOR_ENCOUNTER' };
+  }
+
+  if (inv.otherWorldState) {
+    const ow = inv.otherWorldState;
+    const world = OTHER_WORLDS[ow.worldId as OtherWorldId];
+    if (ow.stayInBox) {
+      next = patchInvestigator(next, idx, i => ({ ...i, otherWorldState: { ...ow, stayInBox: false } }));
+      next = addLog(next, `${inv.name} is still lost in Box ${ow.box} of ${world?.name}.`);
+    } else if (ow.box === 2) {
+      next = patchInvestigator(next, idx, i => ({ ...i, otherWorldState: { ...ow, box: 1, turnsRemaining: 1 } }));
+      next = addLog(next, `${inv.name} advances to Box 1 in ${world?.name}.`);
+    } else {
+      const gate = next.openGates.find(g => g.locationId === ow.gateLocationId) ||
+        next.openGates.find(g => g.otherWorldId === ow.worldId);
+      const locId = gate?.locationId || ow.gateLocationId;
+      const nodeId = (locId && getNodeForLocation(locId)) || 'LOC_TRAIN_STATION';
+      next = patchInvestigator(next, idx, i => ({ ...i, otherWorldState: undefined, locationNodeId: nodeId }));
+      next = addLog(next, `${inv.name} returns from ${world?.name} through the gate at ${getNodeDisplayLabel(nodeId)}!`);
+    }
+  }
+  return next;
+}
+
+// -------------------------------------------------------------
+// Movement
+// -------------------------------------------------------------
 export function getAvailableMoveNodes(
   currentNodeId: string,
   movesRemaining: number,
@@ -222,97 +469,73 @@ export function getAvailableMoveNodes(
   return getReachableNodes(currentNodeId, movesRemaining, monsterNodes);
 }
 
-// Mythos monster movement algorithm adhering to 1987 rules
+function turnAngle(prevId: string | undefined, curId: string, nextId: string): number {
+  const prev = prevId ? BOARD_NODES[prevId] : undefined;
+  const cur = BOARD_NODES[curId];
+  const nxt = BOARD_NODES[nextId];
+  if (!prev || !cur || !nxt) return 0;
+  const hx = cur.x - prev.x;
+  const hy = cur.y - prev.y;
+  const cx = nxt.x - cur.x;
+  const cy = nxt.y - cur.y;
+  // Screen coordinates (y down): positive cross product = clockwise = right turn
+  return Math.atan2(hx * cy - hy * cx, hx * cx + hy * cy);
+}
+
+function chooseNextStep(m: Monster, curId: string, prevId: string | undefined): string | null {
+  const all = getNeighbors(curId);
+  if (all.length === 0) return null;
+  const options = all.length > 1 && prevId ? all.filter(n => n !== prevId) : all;
+  if (options.length === 1 || !prevId || m.handedness === 'none' || !m.handedness) {
+    return options[Math.floor(Math.random() * options.length)];
+  }
+  const sorted = [...options].sort((a, b) => turnAngle(prevId, curId, a) - turnAngle(prevId, curId, b));
+  return m.handedness === 'R' ? sorted[sorted.length - 1] : sorted[0];
+}
+
+/** Mythos: every monster moves its speed (flyers swoop toward the nearest investigator). */
 export function executeMonsterMovement(
   monsters: Monster[],
   investigators: Investigator[]
 ): { updatedMonsters: Monster[]; logs: string[] } {
   const logs: string[] = [];
+  const targets = investigators.filter(i => !i.otherWorldState && BOARD_NODES[i.locationNodeId]);
+  const occupied = new Set(targets.map(t => t.locationNodeId));
+
   const updatedMonsters = monsters.map(m => {
-    // 1. Stationary monsters do not move
-    if (m.isStationary || m.speed <= 0) {
-      return m;
-    }
+    if (m.isStationary || m.speed <= 0 || !BOARD_NODES[m.currentNodeId]) return m;
+    if (occupied.has(m.currentNodeId)) return m; // already engaging an investigator
 
-    let currentNode = BOARD_NODES[m.currentNodeId];
-    if (!currentNode) {
-      return m;
-    }
-
-    // 2. Flyer monsters move towards nearest investigator
-    if (m.isFlyer) {
-      const target = findNearestInvestigator(m.currentNodeId, investigators);
-      if (target) {
-        const nextStep = getStepTowards(m.currentNodeId, target.locationNodeId);
-        if (nextStep) {
-          logs.push(`${m.name} flew along the streets toward ${target.name}!`);
-          return { ...m, currentNodeId: nextStep };
-        }
+    if (m.isFlyer && targets.length > 0) {
+      let best: string[] | null = null;
+      for (const t of targets) {
+        const path = findShortestPath(m.currentNodeId, t.locationNodeId, 99, []);
+        if (path && (!best || path.length < best.length)) best = path;
+      }
+      if (best && best.length > 1) {
+        const steps = Math.min(m.flyerSpeed || m.speed, best.length - 1);
+        const dest = best[steps];
+        const prev = best[steps - 1];
+        logs.push(`${m.name} swoops ${steps} space${steps > 1 ? 's' : ''} to ${getNodeDisplayLabel(dest)}.`);
+        return { ...m, currentNodeId: dest, prevNodeId: prev };
       }
     }
 
-    // 3. Regular monsters move based on connected paths and handedness
-    const neighbors = getNeighbors(m.currentNodeId);
-    if (neighbors.length === 0) return m;
-
-    let chosenNode = neighbors[0];
-    if (neighbors.length > 1) {
-      if (m.handedness === 'R') {
-        chosenNode = neighbors[neighbors.length - 1]; // Rightmost
-      } else if (m.handedness === 'L') {
-        chosenNode = neighbors[0]; // Leftmost
-      } else {
-        chosenNode = neighbors[Math.floor(Math.random() * neighbors.length)];
-      }
+    let cur = m.currentNodeId;
+    let prev = m.prevNodeId;
+    let moved = 0;
+    for (let s = 0; s < m.speed; s++) {
+      const step = chooseNextStep(m, cur, prev);
+      if (!step) break;
+      prev = cur;
+      cur = step;
+      moved++;
+      if (occupied.has(cur)) break; // stops when it reaches an investigator
     }
-
-    const destLabel = BOARD_NODES[chosenNode]?.label || chosenNode;
-    logs.push(`${m.name} prowled from ${currentNode.label || currentNode.id} to ${destLabel}.`);
-    return { ...m, currentNodeId: chosenNode };
+    if (moved === 0) return m;
+    logs.push(`${m.name} prowls to ${getNodeDisplayLabel(cur)}.`);
+    return { ...m, currentNodeId: cur, prevNodeId: prev };
   });
 
   return { updatedMonsters, logs };
-}
-
-function findNearestInvestigator(startNodeId: string, investigators: Investigator[]): Investigator | null {
-  if (investigators.length === 0) return null;
-  const startNode = BOARD_NODES[startNodeId];
-  if (!startNode) return investigators[0];
-
-  let nearest = investigators[0];
-  let minDistance = Infinity;
-
-  for (const inv of investigators) {
-    const invNode = BOARD_NODES[inv.locationNodeId];
-    if (!invNode) continue;
-    const dist = Math.hypot(startNode.x - invNode.x, startNode.y - invNode.y);
-    if (dist < minDistance) {
-      minDistance = dist;
-      nearest = inv;
-    }
-  }
-
-  return nearest;
-}
-
-function getStepTowards(startNodeId: string, targetNodeId: string): string | null {
-  if (startNodeId === targetNodeId) return null;
-  const start = BOARD_NODES[startNodeId];
-  const target = BOARD_NODES[targetNodeId];
-  if (!start || !target) return null;
-
-  let bestNeighbor: string | null = null;
-  let bestDist = Infinity;
-
-  for (const neighborId of getNeighbors(startNodeId)) {
-    const neighbor = BOARD_NODES[neighborId];
-    if (!neighbor) continue;
-    const dist = Math.hypot(neighbor.x - target.x, neighbor.y - target.y);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestNeighbor = neighborId;
-    }
-  }
-
-  return bestNeighbor;
 }

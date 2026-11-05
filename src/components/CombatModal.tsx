@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Investigator, Monster, Card } from '../types/game';
-import { rollD6 } from '../game/engine';
+import { rollD6, getEffectiveStats } from '../game/engine';
 import { sound } from '../utils/audio';
 import { Skull, Shield, Brain, Sword, Sparkles, Footprints, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 
@@ -9,8 +9,7 @@ interface CombatModalProps {
   monster: Monster;
   onVictory: (monster: Monster) => void;
   onFlee: () => void;
-  onDefeat: (investigator: Investigator) => void;
-  onClose: () => void;
+  onDefeat: (cause: 'strength' | 'sanity') => void;
   onUpdateInvestigator: (updated: Investigator) => void;
 }
 
@@ -20,10 +19,10 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   onVictory,
   onFlee,
   onDefeat,
-  onClose,
   onUpdateInvestigator
 }) => {
-  const [stage, setStage] = useState<'sanity' | 'action_choice' | 'fight' | 'resolved'>('sanity');
+  const [stage, setStage] = useState<'sanity' | 'action_choice' | 'fight' | 'resolved' | 'ko'>('sanity');
+  const [koCause, setKoCause] = useState<'strength' | 'sanity'>('strength');
   const [sanityResult, setSanityResult] = useState<{ roll: number; passed: boolean; loss: number } | null>(null);
   const [sneakResult, setSneakResult] = useState<{ roll: number; passed: boolean } | null>(null);
   
@@ -42,8 +41,18 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   } | null>(null);
 
   // Available weapons & spells
-  const weapons = investigator.items.filter(i => (i.fightBonus || 0) > 0 || i.hands);
+  const stats = getEffectiveStats(investigator);
+  const weapons = investigator.items.filter(i => (i.fightBonus || 0) > 0);
   const combatSpells = investigator.spells.filter(s => (s.magicBonus || 0) > 0);
+  const magicOnly = !!monster.specialRules?.some(r => /only magic|magic attacks only/i.test(r));
+  const gunImmune = !!monster.specialRules?.some(r => /unharmed by guns/i.test(r));
+  const cannotSneak = !!monster.specialRules?.includes('Cannot be Sneaked past');
+  const hasMists = investigator.spells.some(s => s.specialEffect === 'auto_sneak');
+  const weaponWorks = (w: Card) => !(magicOnly && !w.isMagical) && !(gunImmune && w.isGun);
+  const spellCostSelected = selectedSpellIds.reduce(
+    (sum, id) => sum + (investigator.spells.find(s => s.id === id)?.sanityCost || 0),
+    0
+  );
 
   // Step 1: Sanity Check
   const handleSanityRoll = () => {
@@ -60,7 +69,8 @@ export const CombatModal: React.FC<CombatModalProps> = ({
 
     if (newSanity <= 0) {
       sound.playCombatStrike(false);
-      onDefeat(updated);
+      setKoCause('sanity');
+      setStage('ko');
     } else {
       setStage('action_choice');
     }
@@ -69,19 +79,21 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   // Step 2: Sneak Roll
   const handleSneakRoll = () => {
     sound.playDiceRoll();
-    const roll = rollD6();
-    const passed = roll <= investigator.stats.sneakSkill;
+    const roll = hasMists ? 1 : rollD6();
+    const passed = hasMists || roll <= stats.sneak;
     setSneakResult({ roll, passed });
+    if (stage !== 'action_choice') setStage('action_choice');
 
     if (passed) {
       sound.playStep();
       setTimeout(() => {
         onFlee();
-      }, 1200);
+      }, 900);
     } else {
       setTimeout(() => {
+        setSneakResult(null);
         setStage('fight');
-      }, 1200);
+      }, 1100);
     }
   };
 
@@ -109,7 +121,7 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   const toggleSpell = (spell: Card) => {
     if (selectedSpellIds.includes(spell.id)) {
       setSelectedSpellIds(prev => prev.filter(id => id !== spell.id));
-    } else {
+    } else if (spellCostSelected + (spell.sanityCost || 0) < investigator.sanity) {
       setSelectedSpellIds(prev => [...prev, spell.id]);
     }
   };
@@ -118,11 +130,11 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   const handleAttackRoll = () => {
     sound.playDiceRoll();
     const dieRoll = rollD6();
-    const skillBonus = investigator.stats.fightSkill;
+    const skillBonus = magicOnly ? 0 : stats.fight;
 
     const weaponBonus = selectedWeaponIds.reduce((sum, id) => {
       const w = investigator.items.find(item => item.id === id);
-      return sum + (w?.fightBonus || 0);
+      return sum + (w && weaponWorks(w) ? w.fightBonus || 0 : 0);
     }, 0);
 
     const spellBonus = selectedSpellIds.reduce((sum, id) => {
@@ -134,6 +146,13 @@ export const CombatModal: React.FC<CombatModalProps> = ({
     const victory = total >= monster.strength;
 
     sound.playCombatStrike(victory);
+
+    // Casting costs sanity
+    let current = investigator;
+    if (spellCostSelected > 0) {
+      current = { ...investigator, sanity: Math.max(1, investigator.sanity - spellCostSelected) };
+      onUpdateInvestigator(current);
+    }
 
     if (victory) {
       setFightResult({
@@ -149,9 +168,9 @@ export const CombatModal: React.FC<CombatModalProps> = ({
     } else {
       // Monster counterattacks with D6 strength damage
       const damageTaken = rollD6();
-      const newStrength = Math.max(0, investigator.strength - damageTaken);
+      const newStrength = Math.max(0, current.strength - damageTaken);
 
-      const updated = { ...investigator, strength: newStrength };
+      const updated = { ...current, strength: newStrength };
       onUpdateInvestigator(updated);
 
       setFightResult({
@@ -166,7 +185,8 @@ export const CombatModal: React.FC<CombatModalProps> = ({
       });
 
       if (newStrength <= 0) {
-        onDefeat(updated);
+        setKoCause('strength');
+        setStage('ko');
       } else {
         setStage('resolved');
       }
@@ -174,13 +194,13 @@ export const CombatModal: React.FC<CombatModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#241710] text-[#f5ecd8] border-3 border-[#8c6b45] rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true">
+      <div className="bg-[#241710] text-[#f5ecd8] border-3 border-[#8c6b45] rounded-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto shadow-2xl">
         {/* Header */}
         <div className="bg-gradient-to-r from-red-950 via-[#3d1b14] to-red-950 p-4 border-b border-[#8c6b45] flex items-center justify-between">
           <div className="flex items-center gap-2 text-rose-400 font-serif font-bold text-xl">
             <Skull className="w-6 h-6 text-red-500 animate-pulse" />
-            Combat Encounter: {monster.name}
+            {investigator.name} vs {monster.name}
           </div>
           <span className="text-xs bg-red-950/80 border border-red-700 text-red-300 px-2.5 py-1 rounded-full font-bold">
             SP: {monster.strength}
@@ -225,10 +245,11 @@ export const CombatModal: React.FC<CombatModalProps> = ({
               </h5>
               <p className="text-xs text-[#d1bea8] leading-relaxed">
                 Before attacking or evading, you must test your mental fortitude against the sight of this beast.
-                Roll D6 ≤ current Sanity ({investigator.sanity}).
+                Roll D6 ≤ current Sanity ({investigator.sanity}). Pass: lose {monster.sanityCheck.passLoss} · Fail: lose {monster.sanityCheck.failLoss}.
               </p>
 
               <button
+                autoFocus
                 onClick={handleSanityRoll}
                 className="w-full bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-2.5 rounded-lg shadow-lg transition flex items-center justify-center gap-2"
               >
@@ -258,17 +279,20 @@ export const CombatModal: React.FC<CombatModalProps> = ({
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <button
                   onClick={handleSneakRoll}
-                  disabled={monster.specialRules?.includes('Cannot be Sneaked past')}
+                  disabled={cannotSneak || !!sneakResult}
                   className="bg-[#422c1b] hover:bg-[#593c25] border border-[#a16207] text-amber-200 font-bold p-3 rounded-lg text-sm flex flex-col items-center gap-1 shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Footprints className="w-5 h-5 text-amber-400" />
                   <span>Attempt Sneak</span>
-                  <span className="text-[10px] text-[#caa888] font-normal">Roll D6 ≤ Sneak ({investigator.stats.sneakSkill})</span>
+                  <span className="text-[10px] text-[#caa888] font-normal">
+                    {cannotSneak ? 'This horror cannot be evaded' : hasMists ? "Mists of R'lyeh: automatic success" : `Roll D6 ≤ Sneak (${stats.sneak})`}
+                  </span>
                 </button>
 
                 <button
                   onClick={() => setStage('fight')}
-                  className="bg-red-800 hover:bg-red-700 border border-red-500 text-white font-bold p-3 rounded-lg text-sm flex flex-col items-center gap-1 shadow-md transition"
+                  disabled={!!sneakResult}
+                  className="disabled:opacity-50 bg-red-800 hover:bg-red-700 border border-red-500 text-white font-bold p-3 rounded-lg text-sm flex flex-col items-center gap-1 shadow-md transition"
                 >
                   <Sword className="w-5 h-5 text-red-300" />
                   <span>Engage in Combat</span>
@@ -303,16 +327,19 @@ export const CombatModal: React.FC<CombatModalProps> = ({
                 <div className="flex flex-wrap gap-2">
                   {weapons.map(weapon => {
                     const isSelected = selectedWeaponIds.includes(weapon.id);
+                    const works = weaponWorks(weapon);
                     return (
                       <button
                         key={weapon.id}
                         type="button"
+                        title={works ? weapon.description : 'Useless against this monster'}
+                        disabled={!works}
                         onClick={() => toggleWeapon(weapon)}
                         className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium flex items-center gap-1.5 transition ${
                           isSelected
                             ? 'bg-amber-600 border-amber-300 text-white shadow'
                             : 'bg-[#1e130b] border-[#6b4729] text-[#d6bda4] hover:border-amber-500'
-                        }`}
+                        } disabled:opacity-40 disabled:line-through disabled:cursor-not-allowed`}
                       >
                         <Sword className="w-3.5 h-3.5" />
                         <span>{weapon.name}</span>
@@ -340,6 +367,7 @@ export const CombatModal: React.FC<CombatModalProps> = ({
                         <button
                           key={spell.id}
                           type="button"
+                          title={spell.description}
                           onClick={() => toggleSpell(spell)}
                           className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium flex items-center gap-1.5 transition ${
                             isSelected
@@ -350,6 +378,7 @@ export const CombatModal: React.FC<CombatModalProps> = ({
                           <Sparkles className="w-3.5 h-3.5 text-purple-300" />
                           <span>{spell.name}</span>
                           <span className="text-[10px] bg-black/30 px-1 rounded">+{spell.magicBonus}</span>
+                          {!!spell.sanityCost && <span className="text-[9px] text-blue-200">−{spell.sanityCost} SAN</span>}
                         </button>
                       );
                     })}
@@ -362,14 +391,55 @@ export const CombatModal: React.FC<CombatModalProps> = ({
                 onClick={handleAttackRoll}
                 className="w-full bg-gradient-to-r from-red-700 to-rose-800 hover:from-red-600 hover:to-rose-700 text-white font-bold py-3 rounded-xl shadow-xl transition transform active:scale-95 flex items-center justify-center gap-2 text-base"
               >
-                <Sword className="w-5 h-5" /> Strike Monster! (D6 + Bonuses vs {monster.strength} SP)
+                <Sword className="w-5 h-5" /> Strike! (D6 + {magicOnly ? 0 : stats.fight} + {
+                  selectedWeaponIds.reduce((sum, id) => {
+                    const w = investigator.items.find(item => item.id === id);
+                    return sum + (w && weaponWorks(w) ? w.fightBonus || 0 : 0);
+                  }, 0) +
+                  selectedSpellIds.reduce((sum, id) => sum + (investigator.spells.find(sp => sp.id === id)?.magicBonus || 0), 0)
+                } vs {monster.strength})
               </button>
+              {magicOnly && (
+                <p className="text-[11px] text-purple-300">Only magic harms this horror — your Fight skill and mundane weapons do not count.</p>
+              )}
+              {spellCostSelected > 0 && (
+                <p className="text-[11px] text-blue-300">Casting will cost {spellCostSelected} Sanity.</p>
+              )}
             </div>
           )}
 
           {/* ======================================================== */}
           {/* STAGE 4: RESOLUTION */}
           {/* ======================================================== */}
+          {stage === 'ko' && (
+            <div className="p-4 rounded-xl border bg-rose-950/80 border-rose-600 text-rose-100 space-y-3">
+              <div className="flex items-center gap-2 font-serif font-bold text-lg">
+                <XCircle className="w-6 h-6 text-rose-400" />
+                {koCause === 'sanity' ? 'Your mind shatters!' : 'You collapse from your wounds!'}
+              </div>
+              {sanityResult && koCause === 'sanity' && (
+                <p className="text-xs">Sanity roll {sanityResult.roll} — lost {sanityResult.loss} Sanity.</p>
+              )}
+              {fightResult && koCause === 'strength' && (
+                <p className="text-xs">
+                  Attack total {fightResult.total} vs {fightResult.monsterSP}. The monster dealt {fightResult.damageTaken} damage.
+                </p>
+              )}
+              <p className="text-xs text-rose-200">
+                {koCause === 'sanity' ? 'You will wake in Arkham Sanitarium with 1 Sanity and lose a spell.' : "You will wake in St. Mary's Hospital with 1 Strength and lose an item."}
+              </p>
+              <div className="flex justify-end">
+                <button
+                  autoFocus
+                  onClick={() => onDefeat(koCause)}
+                  className="bg-rose-700 hover:bg-rose-600 text-white font-bold px-4 py-2 rounded-lg shadow transition"
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          )}
+
           {stage === 'resolved' && fightResult && (
             <div className={`p-4 rounded-xl border space-y-3 ${
               fightResult.victory ? 'bg-emerald-950/80 border-emerald-600 text-emerald-100' : 'bg-rose-950/80 border-rose-600 text-rose-100'
@@ -403,28 +473,29 @@ export const CombatModal: React.FC<CombatModalProps> = ({
               <div className="pt-2 flex justify-end">
                 {fightResult.victory ? (
                   <button
+                    autoFocus
                     onClick={() => onVictory(monster)}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg shadow transition"
                   >
                     Claim Monster Trophy
                   </button>
                 ) : (
-                  <div className="flex gap-2">
-                    {investigator.strength > 0 ? (
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    {!cannotSneak && (
                       <button
-                        onClick={() => setStage('fight')}
-                        className="bg-amber-700 hover:bg-amber-600 text-white font-bold px-4 py-2 rounded-lg shadow transition"
+                        onClick={handleSneakRoll}
+                        className="bg-[#422c1b] hover:bg-[#593c25] border border-[#a16207] text-amber-200 font-bold px-4 py-2 rounded-lg shadow transition"
                       >
-                        Fight Again Next Round
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onDefeat(investigator)}
-                        className="bg-rose-700 hover:bg-rose-600 text-white font-bold px-4 py-2 rounded-lg shadow transition"
-                      >
-                        Admit to Hospital
+                        Try to Sneak Away
                       </button>
                     )}
+                    <button
+                      autoFocus
+                      onClick={() => setStage('fight')}
+                      className="bg-amber-700 hover:bg-amber-600 text-white font-bold px-4 py-2 rounded-lg shadow transition"
+                    >
+                      Fight Again
+                    </button>
                   </div>
                 )}
               </div>

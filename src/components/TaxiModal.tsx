@@ -7,17 +7,25 @@ interface TaxiModalProps {
   isOpen: boolean;
   onSelectDestination: (nodeId: string) => void;
   onClose: () => void;
+  title?: string;
+  subtitle?: string;
+  monsterNodeIds?: string[];
+  gateLocationIds?: string[];
 }
 
 export const TaxiModal: React.FC<TaxiModalProps> = ({
   isOpen,
   onSelectDestination,
-  onClose
+  onClose,
+  title = 'Arkham Yellow Cab Service',
+  subtitle = 'Fare: $1 — Quick transit directly to any location or taxi stand in Arkham!',
+  monsterNodeIds = [],
+  gateLocationIds = []
 }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-fadeIn" role="dialog" aria-modal="true">
       <div className="bg-[#241710] text-[#f5ecd8] border-3 border-amber-600 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="bg-gradient-to-r from-amber-950 via-[#3d2510] to-amber-950 p-4 border-b border-amber-600/60 flex items-center justify-between">
@@ -27,10 +35,10 @@ export const TaxiModal: React.FC<TaxiModalProps> = ({
             </div>
             <div>
               <h3 className="font-serif font-bold text-lg text-amber-200">
-                Arkham Yellow Cab Service
+                {title}
               </h3>
               <p className="text-xs text-amber-300">
-                Fare: $1 — Quick transit directly to any location or taxi stand in Arkham!
+                {subtitle}
               </p>
             </div>
           </div>
@@ -45,9 +53,14 @@ export const TaxiModal: React.FC<TaxiModalProps> = ({
             <h4 className="text-xs font-serif font-bold text-amber-300 uppercase tracking-wider mb-2">
               Select Arkham Location:
             </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.values(LOCATIONS_DATA).map(loc => {
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {Object.values(LOCATIONS_DATA)
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(loc => {
                 const targetNodeId = getNodeForLocation(loc.id) || loc.id;
+                const monsters = monsterNodeIds.filter(n => n === targetNodeId).length;
+                const gate = gateLocationIds.includes(loc.id);
                 return (
                   <button
                     key={loc.id}
@@ -55,7 +68,9 @@ export const TaxiModal: React.FC<TaxiModalProps> = ({
                     className="bg-[#311f13] hover:bg-amber-900/60 border border-[#6b472a] hover:border-amber-500 p-2.5 rounded-lg text-left transition flex items-center gap-2 text-xs group"
                   >
                     <MapPin className="w-3.5 h-3.5 text-amber-500 group-hover:scale-110 transition shrink-0" />
-                    <span className="font-medium text-[#f5ecd8] truncate">{loc.name}</span>
+                    <span className="font-medium text-[#f5ecd8] truncate flex-1">{loc.name}</span>
+                    {gate && <span className="text-[9px] font-bold bg-purple-800 text-purple-100 px-1.5 py-0.5 rounded">GATE</span>}
+                    {monsters > 0 && <span className="text-[9px] font-bold bg-red-800 text-red-100 px-1.5 py-0.5 rounded">{monsters} MONSTER{monsters > 1 ? 'S' : ''}</span>}
                   </button>
                 );
               })}
@@ -95,7 +110,7 @@ export const TaxiModal: React.FC<TaxiModalProps> = ({
             onClick={onClose}
             className="text-xs text-stone-400 hover:text-white px-4 py-1.5 transition"
           >
-            Cancel Taxi
+            Cancel
           </button>
         </div>
       </div>

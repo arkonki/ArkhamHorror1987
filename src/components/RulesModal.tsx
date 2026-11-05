@@ -12,7 +12,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-[#241710] text-[#f5ecd8] border-3 border-[#8c6b45] rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="bg-[#180e0a] p-4 border-b border-[#8c6b45] flex items-center justify-between">
@@ -161,7 +161,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
                 <li><strong>Entering a Gate:</strong> Transits investigator to <strong>Box 2</strong> of that Other World. Roll on its Gate Table.</li>
                 <li><strong>Next Turn:</strong> Advances to <strong>Box 1</strong>, rolls on Gate Table.</li>
                 <li><strong>Following Turn:</strong> Returns through matching gate to Arkham!</li>
-                <li><strong>Destroying Gates:</strong> Attack gate with physical/magical weapons + D6 roll ≥ gate strength.</li>
+                <li><strong>Destroying Gates:</strong> D6 + Fight + your best weapons (max 2 hands) ≥ gate strength. One attempt per turn — a failed attack ends your turn.</li>
                 <li><strong>Elder Signs:</strong> Discard an Elder Sign card and spend 2 Sanity points to permanently close and seal the gate against future openings!</li>
               </ul>
             </div>

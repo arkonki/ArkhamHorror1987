@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { sound } from '../utils/audio';
 import { Dices, Footprints, Sparkles, X } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface DiceRollerProps {
   description: string;
   canReroll?: boolean;
   onReroll?: () => void;
+  autoCloseMs?: number;
 }
 
 // Render authentic 6-sided die face with classic inset pips
@@ -104,9 +105,12 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({
   title,
   description,
   canReroll,
-  onReroll
+  onReroll,
+  autoCloseMs
 }) => {
   const [isRolling, setIsRolling] = useState(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const [displayDice, setDisplayDice] = useState<[number, number]>(dice);
 
   useEffect(() => {
@@ -122,15 +126,18 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({
         ]);
       }, 70);
 
+      let autoTimer: ReturnType<typeof setTimeout> | undefined;
       const timer = setTimeout(() => {
         clearInterval(interval);
         setDisplayDice(dice);
         setIsRolling(false);
+        if (autoCloseMs) autoTimer = setTimeout(() => closeRef.current(), autoCloseMs);
       }, 600);
 
       return () => {
         clearInterval(interval);
         clearTimeout(timer);
+        if (autoTimer) clearTimeout(autoTimer);
       };
     }
   }, [isOpen, dice[0], dice[1]]);
@@ -140,7 +147,14 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({
   const sum = displayDice[0] + displayDice[1];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fadeIn"
+      role="dialog"
+      aria-modal="true"
+      onClick={e => {
+        if (e.target === e.currentTarget && !isRolling) onClose();
+      }}
+    >
       <div className="relative w-full max-w-md bg-[#25180f] border-4 border-[#a27b4e] rounded-2xl p-6 shadow-2xl text-[#f5ecd8]">
         {/* Close Button */}
         <button
@@ -176,7 +190,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({
         </div>
 
         {/* Board Game Movement Guide */}
-        <div className="bg-[#1a110a] p-3.5 rounded-lg border border-[#4a321e] text-xs text-stone-300 space-y-1.5 mb-5">
+        <div className="hidden sm:block bg-[#1a110a] p-3.5 rounded-lg border border-[#4a321e] text-xs text-stone-300 space-y-1.5 mb-5">
           <p className="font-semibold text-amber-300 flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5" /> How Movement Works:
           </p>

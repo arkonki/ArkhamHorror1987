@@ -9,10 +9,8 @@ interface GameOverModalProps {
 }
 
 export const GameOverModal: React.FC<GameOverModalProps> = ({ winner, onRestart }) => {
-  if (!winner) return null;
-
   useEffect(() => {
-    if (winner.isVictory) {
+    if (winner?.isVictory) {
       try {
         confetti({
           particleCount: 120,
@@ -25,8 +23,10 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ winner, onRestart 
     }
   }, [winner]);
 
+  if (!winner) return null;
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-[#241710] text-[#f5ecd8] border-4 border-[#8c6b45] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl text-center">
         {/* Banner */}
         <div

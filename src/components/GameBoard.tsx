@@ -58,21 +58,68 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dragDistance = useRef(0);
+  const framedOnce = useRef(false);
 
   const activeInvestigator = gameState.investigators[gameState.activeInvestigatorIndex];
 
-  // Center on active investigator
+  // Center on a node. The SVG is a fixed 1120x980px canvas, so board units equal pixels at zoom 1.
+  const centerOn = (nodeId: string | undefined, z: number) => {
+    const el = containerRef.current;
+    const locNode = nodeId ? BOARD_NODES[nodeId] : undefined;
+    if (!el || !locNode) return;
+    setPan({
+      x: el.clientWidth / 2 - locNode.x * z,
+      y: el.clientHeight / 2 - locNode.y * z
+    });
+  };
+
   const centerOnActiveInvestigator = () => {
     if (!activeInvestigator) return;
-    const locNode = BOARD_NODES[activeInvestigator.locationNodeId];
-    if (locNode) {
-      setPan({
-        x: 480 - locNode.x * zoom,
-        y: 400 - locNode.y * zoom
-      });
-      sound.playStep();
-    }
+    const z = Math.max(zoom, 1.3);
+    setZoom(z);
+    centerOn(activeInvestigator.locationNodeId, z);
+    sound.playStep();
   };
+
+  // Desktop: fit the board width and frame the town. Small screens: follow the active investigator each turn.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !activeInvestigator) return;
+    if (el.clientWidth >= 700) {
+      if (framedOnce.current) return; // don't fight the player's own pan/zoom on desktop
+      framedOnce.current = true;
+      const z = Math.min(1, el.clientWidth / 1120);
+      setZoom(z);
+      setPan({ x: (el.clientWidth - 1120 * z) / 2, y: Math.min(0, el.clientHeight / 2 - 590 * z) });
+      return;
+    }
+    if (activeInvestigator.otherWorldState) return;
+    setZoom(1);
+    centerOn(activeInvestigator.locationNodeId, 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInvestigator?.id]);
+
+  // Wheel zoom needs a non-passive native listener, otherwise the page scrolls as well
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      setZoom(prevZoom => {
+        const nextZoom = Math.min(2.5, Math.max(0.3, prevZoom * factor));
+        const ratio = nextZoom / prevZoom;
+        setPan(p => ({ x: mx - (mx - p.x) * ratio, y: my - (my - p.y) * ratio }));
+        return nextZoom;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const jumpToOtherWorlds = () => {
     setZoom(1.2);
@@ -92,34 +139,41 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     sound.playStep();
   };
 
+  // Fit the whole board into the frame
   const resetView = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+    const el = containerRef.current;
+    const z = el ? Math.min(el.clientWidth / 1120, el.clientHeight / 980) : 1;
+    setZoom(z);
+    setPan({ x: el ? (el.clientWidth - 1120 * z) / 2 : 0, y: el ? (el.clientHeight - 980 * z) / 2 : 0 });
     sound.playStep();
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('button')) return; // toolbar buttons
     setIsDragging(true);
+    dragDistance.current = 0;
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDragging) return;
-    setPan({
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y
-    });
+    const next = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
+    dragDistance.current += Math.abs(next.x - pan.x) + Math.abs(next.y - pan.y);
+    setPan(next);
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = () => {
     setIsDragging(false);
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    setZoom(prev => Math.min(2.5, Math.max(0.6, prev * zoomFactor)));
+  // A drag should never count as a click on a board space
+  const swallowClickAfterDrag = (e: React.MouseEvent) => {
+    if (dragDistance.current > 6) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    dragDistance.current = 0;
   };
 
   // Find monsters on a specific node
@@ -160,13 +214,14 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[780px] bg-[#1a120c] overflow-hidden rounded-xl border-4 border-[#4a3420] select-none shadow-2xl"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
-      style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+      className="relative w-full h-[62vh] min-h-[380px] lg:h-[calc(100vh-250px)] lg:min-h-[520px] max-h-[860px] bg-[#1a120c] overflow-hidden rounded-xl border-4 border-[#4a3420] select-none shadow-2xl"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+      onClickCapture={swallowClickAfterDrag}
+      style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
     >
       {/* Viewport Control Bar */}
       <div className="absolute top-4 right-4 z-20 flex flex-wrap gap-1.5 bg-[#25170f]/95 backdrop-blur-md p-1.5 rounded-lg border border-[#7a5433] shadow-xl">
@@ -178,7 +233,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
           <ZoomIn className="w-4 h-4" />
         </button>
         <button
-          onClick={() => { setZoom(prev => Math.max(0.6, prev - 0.2)); sound.playStep(); }}
+          onClick={() => { setZoom(prev => Math.max(0.3, prev - 0.2)); sound.playStep(); }}
           className="p-1.5 text-amber-200 hover:bg-[#4a3420] rounded transition"
           title="Zoom Out"
         >
@@ -215,7 +270,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         </button>
         <button
           onClick={jumpToDoomTrack}
-          className="px-2 py-1 text-[11px] font-serif font-bold text-rose-200 hover:bg-[#4a3420] rounded transition"
+          className="hidden sm:inline-block px-2 py-1 text-[11px] font-serif font-bold text-rose-200 hover:bg-[#4a3420] rounded transition"
         >
           Doom Track
         </button>
@@ -223,7 +278,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
       {/* Movement & Turn Instruction Banner */}
       {gameState.hasRolledMovement && gameState.movesRemaining > 0 && (
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#1e130b]/90 backdrop-blur-md px-4 py-2 rounded-lg border-2 border-amber-500 shadow-2xl text-amber-200">
+        <div className="hidden md:flex absolute top-4 left-4 z-20 items-center gap-3 bg-[#1e130b]/90 backdrop-blur-md px-4 py-2 rounded-lg border-2 border-amber-500 shadow-2xl text-amber-200">
           <Footprints className="w-5 h-5 text-amber-400 animate-pulse" />
           <div className="text-xs">
             <span className="font-bold text-white text-sm">
@@ -649,7 +704,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                   <g
                     key={node.id}
                     className="cursor-pointer group"
-                    onClick={() => { onNodeClick(node.id); sound.playStep(); }}
+                    onClick={() => onNodeClick(node.id)}
                     onMouseEnter={() => setHoveredNodeId(node.id)}
                     onMouseLeave={() => setHoveredNodeId(null)}
                     transform={`translate(${node.x}, ${node.y})`}
@@ -694,7 +749,6 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     onClick={() => {
                       if (isReachable) onNodeClick(node.id);
                       else if (locId) onLocationClick(locId);
-                      sound.playStep();
                     }}
                     onMouseEnter={() => setHoveredNodeId(node.id)}
                     onMouseLeave={() => setHoveredNodeId(null)}
@@ -779,6 +833,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                     {/* Monsters */}
                     {monstersHere.map((m, idx) => (
                       <g key={m.id} transform={`translate(${(idx - (monstersHere.length - 1) / 2) * 20}, -55)`} filter="url(#cardShadow)">
+                        <title>{`${m.name} — SP ${m.strength}, SAN ${m.sanityCheck.passLoss}/${m.sanityCheck.failLoss}${m.specialRules?.length ? ' · ' + m.specialRules.join(', ') : ''}`}</title>
                         <rect x="-10" y="-10" width="20" height="20" fill="#7f1d1d" stroke="#fde047" strokeWidth="1.5" rx="2" />
                         <text x="0" y="5" textAnchor="middle" fill="#ffffff" fontSize="8" fontWeight="bold">
                           {m.strength}
@@ -795,7 +850,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 <g
                   key={node.id}
                   className="cursor-pointer group"
-                  onClick={() => { onNodeClick(node.id); sound.playStep(); }}
+                  onClick={() => onNodeClick(node.id)}
                   onMouseEnter={() => setHoveredNodeId(node.id)}
                   onMouseLeave={() => setHoveredNodeId(null)}
                   transform={`translate(${node.x}, ${node.y})`}
@@ -852,6 +907,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                   {/* Monsters on this Space */}
                   {monstersHere.map((m, idx) => (
                     <g key={m.id} transform={`translate(${(idx - (monstersHere.length - 1) / 2) * 18}, -20)`} filter="url(#cardShadow)">
+                      <title>{`${m.name} — SP ${m.strength}, SAN ${m.sanityCheck.passLoss}/${m.sanityCheck.failLoss}${m.specialRules?.length ? ' · ' + m.specialRules.join(', ') : ''}`}</title>
                       <rect x="-10" y="-10" width="20" height="20" fill="#7f1d1d" stroke="#fde047" strokeWidth="1.5" rx="2" />
                       <polygon
                         points="0,-7 3.5,-1 -3.5,-1"

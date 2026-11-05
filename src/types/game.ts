@@ -34,6 +34,7 @@ export interface Monster {
   specialRules?: string[]; // e.g. "Unharmed By Guns", "Only Magic Harms It", "Hound of Tindalos"
   otherWorldColor?: string; // color tint matching an Other World
   currentNodeId: string; // street node or location ID
+  prevNodeId?: string; // last node the monster came from (gives it a heading for L/R turns)
 }
 
 export interface Gate {
@@ -63,11 +64,15 @@ export interface Investigator {
     worldId: string;
     box: 1 | 2; // Box 2 (first turn entered) -> Box 1 (second turn) -> Return to Arkham
     turnsRemaining: number;
+    gateLocationId?: string; // Arkham location of the gate the investigator went through
+    stayInBox?: boolean; // Bewildered: remain in the current box next turn
   };
   isInHospital?: boolean;
   isInSanitarium?: boolean;
   isInJail?: boolean;
   lostNextTurn?: boolean;
+  skipTurns?: number; // Turns the investigator must sit out (jail, handcuffed, trapped...)
+  moveBonus?: number; // One-shot bonus added to the next movement roll
   items: Card[];
   spells: Card[];
   skills: Card[];
@@ -184,6 +189,9 @@ export interface GameState {
   movesRemaining: number;
   hasRolledMovement: boolean;
   hasTakenActionThisTurn: boolean;
+  turnLost?: boolean; // Active investigator is sitting this turn out
+  evadedMonsterIds: string[]; // Monsters successfully sneaked past this turn / mythos phase
+  usedCardIds: string[]; // Once-per-turn spells already used this turn
   openGates: Gate[];
   activeMonsters: Monster[];
   monsterCup: Monster[];

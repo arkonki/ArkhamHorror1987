@@ -1,32 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  GameState,
-  Investigator,
-  Monster,
-  Gate,
-  OtherWorldId,
-  LocationEvent
-} from './types/game';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Card, GameState, Monster, OtherWorldId, LocationEvent } from './types/game';
 import {
   initializeGame,
   roll2D6,
   rollD6,
   getAvailableMoveNodes,
-  executeMonsterMovement
+  executeMonsterMovement,
+  addLog,
+  patchInvestigator,
+  getInvestigatorIndex,
+  beginInvestigatorTurn,
+  openGateAt,
+  spawnMonsterAtLocation,
+  removeGate,
+  knockOut
 } from './game/engine';
-import {
-  LOCATIONS_DATA,
-  OTHER_WORLDS,
-  GATE_APPEARANCE_TABLE
-} from './data/rules1987';
-import {
-  BOARD_NODES,
-  findShortestPath,
-  getLocationIdForNode,
-  getNodeForLocation,
-  getNodeDisplayLabel,
-  getNeighbors
-} from './data/boardGraph';
+import { applyOutcome, buildEncounterOptions, EncounterOption, Outcome } from './game/encounters';
+import { LOCATIONS_DATA, OTHER_WORLDS, GATE_APPEARANCE_TABLE } from './data/rules1987';
+import { findShortestPath, getLocationIdForNode, getNodeDisplayLabel } from './data/boardGraph';
 import { GameBoard } from './components/GameBoard';
 import { InvestigatorSheet } from './components/InvestigatorSheet';
 import { ActionControls } from './components/ActionControls';
@@ -40,837 +31,762 @@ import { NewGameModal } from './components/NewGameModal';
 import { RulesModal } from './components/RulesModal';
 import { GameOverModal } from './components/GameOverModal';
 import { LogPanel } from './components/LogPanel';
-import {
-  Skull,
-  BookOpen,
-  RotateCcw,
-  Sparkles,
-  Info,
-  ShieldAlert,
-  Compass,
-  Trophy,
-  Users,
-  Volume2,
-  VolumeX,
-  Footprints
-} from 'lucide-react';
+import { Skull, BookOpen, RotateCcw, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { sound } from './utils/audio';
+
+type CombatContext = 'turn' | 'mythos' | 'otherworld';
+
+interface CombatState {
+  monster: Monster;
+  investigatorId: string;
+  context: CombatContext;
+  resumeMoves?: number; // moves left when an ambush interrupted movement
+}
+
+interface EncounterState {
+  uid: number;
+  kind: 'location' | 'otherworld';
+  investigatorId: string;
+  locationId?: string;
+  worldId?: OtherWorldId;
+  endsTurn?: boolean; // Other World exploration ends the investigator's turn
+  title: string;
+  subtitle?: string;
+  roll: number;
+  event: LocationEvent;
+  options: EncounterOption[];
+}
+
+type TaxiMode = 'paid' | 'car' | 'free';
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(() => initializeGame());
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [reachableNodes, setReachableNodes] = useState<string[]>([]);
-  const [adjacentNodes, setAdjacentNodes] = useState<string[]>([]);
-  const [selectedInvestigatorIdx, setSelectedInvestigatorIdx] = useState<number>(0);
-  const [isMovingAnimation, setIsMovingAnimation] = useState<boolean>(false);
-  const [movingPawn, setMovingPawn] = useState<{
-    investigatorId: string;
-    currentNodeId: string;
-  } | null>(null);
+  // The ref always holds the latest committed state, so chained handlers / timers never read stale data
+  const stateRef = useRef<GameState>(gameState);
+  const commit = useCallback((next: GameState) => {
+    stateRef.current = next;
+    setGameState(next);
+  }, []);
+  const cur = () => stateRef.current;
 
-  // Modals state
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [selectedInvestigatorIdx, setSelectedInvestigatorIdx] = useState<number>(0);
+  const [movingPawn, setMovingPawn] = useState<{ investigatorId: string; currentNodeId: string } | null>(null);
+  const moveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [isNewGameOpen, setIsNewGameOpen] = useState(false);
   const [isRulesOpen, setIsRulesOpen] = useState(false);
-  const [isTaxiOpen, setIsTaxiOpen] = useState(false);
-  const [isDiceRollerOpen, setIsDiceRollerOpen] = useState(false);
-  const [diceRollerData, setDiceRollerData] = useState<{
-    dice: [number, number];
-    title: string;
-    description: string;
-  }>({
+  const [taxiMode, setTaxiMode] = useState<TaxiMode | null>(null);
+  const [dice, setDice] = useState<{ open: boolean; dice: [number, number]; title: string; description: string }>({
+    open: false,
     dice: [1, 1],
-    title: 'Dice Roll',
+    title: '',
     description: ''
   });
   const [inspectWorldId, setInspectWorldId] = useState<OtherWorldId | null>(null);
-  const [activeGateModal, setActiveGateModal] = useState<Gate | null>(null);
-  const [activeCombatMonster, setActiveCombatMonster] = useState<Monster | null>(null);
-  const [activeEncounter, setActiveEncounter] = useState<{
-    locationId: string;
-    roll: number;
-    event: LocationEvent;
-  } | null>(null);
+  const [gateModalId, setGateModalId] = useState<string | null>(null);
+  const [combat, setCombat] = useState<CombatState | null>(null);
+  const [encounter, setEncounter] = useState<EncounterState | null>(null);
+  const mythosQueue = useRef<{ investigatorId: string; monsterId: string }[]>([]);
+  const encounterSeq = useRef(0);
 
-  const activeInvestigator = gameState.investigators[gameState.activeInvestigatorIndex];
+  const activeIdx = gameState.activeInvestigatorIndex;
+  const activeInvestigator = gameState.investigators[activeIdx];
+  const isMoving = movingPawn !== null;
 
-  // Helper to append a chronicle log message
-  const addLog = (text: string, type: 'action' | 'combat' | 'mythos' | 'event' | 'system' = 'action') => {
-    setGameState(prev => ({
-      ...prev,
-      log: [
-        ...prev.log,
-        {
-          id: `log_${Date.now()}_${Math.random()}`,
-          timestamp: `T${prev.turnNumber}`,
-          type,
-          text
-        }
-      ]
-    }));
-  };
+  useEffect(() => () => {
+    if (moveTimer.current) clearInterval(moveTimer.current);
+  }, []);
 
-  // Check victory / loss condition after state changes
+  // Keep the character sheet on whoever is acting
   useEffect(() => {
-    if (gameState.currentPhase === 'GAME_OVER') return;
+    setSelectedInvestigatorIdx(activeIdx);
+  }, [activeIdx, gameState.turnNumber]);
 
-    // Victory: Turn 2+, all gates eliminated
-    if (gameState.turnNumber >= 2 && gameState.openGates.length === 0) {
-      let firstCitizen = gameState.investigators[0]?.name;
-      let maxGates = -1;
-      const honorRoll = gameState.investigators.map(inv => {
-        if (inv.trophies.gates.length > maxGates) {
-          maxGates = inv.trophies.gates.length;
-          firstCitizen = inv.name;
-        }
-        return {
-          name: inv.name,
-          gatesClosed: inv.trophies.gates.length,
-          monsterTrophies: inv.trophies.monsters.length
-        };
-      });
+  // Portal sound whenever a new gate opens
+  const prevGateCount = useRef(gameState.openGates.length);
+  useEffect(() => {
+    if (gameState.openGates.length > prevGateCount.current) sound.playEldritchPortal();
+    prevGateCount.current = gameState.openGates.length;
+  }, [gameState.openGates.length]);
 
-      setGameState(prev => ({
-        ...prev,
+  // -------------------------------------------------------------
+  // Win / loss
+  // -------------------------------------------------------------
+  useEffect(() => {
+    const s = cur();
+    if (s.currentPhase === 'GAME_OVER') return;
+    const honorRoll = s.investigators.map(inv => ({
+      name: inv.name,
+      gatesClosed: inv.trophies.gates.length,
+      monsterTrophies: inv.trophies.monsters.length
+    }));
+    const maxGatesAllowed = s.investigators.length <= 3 ? 8 : 7;
+
+    if (s.turnNumber >= 2 && s.openGates.length === 0) {
+      const best = [...s.investigators].sort(
+        (a, b) => b.trophies.gates.length - a.trophies.gates.length || b.trophies.monsters.length - a.trophies.monsters.length
+      )[0];
+      commit({
+        ...s,
         currentPhase: 'GAME_OVER',
         winner: {
           isVictory: true,
-          reason: 'All dimensional gates have been eliminated! Arkham is saved from the cosmic horrors!',
-          firstCitizen,
+          reason: 'All dimensional gates have been closed! Arkham is saved from the cosmic horrors!',
+          firstCitizen: best?.name,
           honorRoll
         }
-      }));
-      return;
-    }
-
-    // Defeat: Doom Track >= 14
-    if (gameState.doomTrack >= gameState.maxDoom) {
-      setGameState(prev => ({
-        ...prev,
+      });
+    } else if (s.doomTrack >= s.maxDoom) {
+      commit({
+        ...s,
         currentPhase: 'GAME_OVER',
         winner: {
           isVictory: false,
-          reason: 'The Doom Factor reached the Doom of Arkham! The dimensional walls collapsed and the Ancient Ones devoured the earth.',
-          honorRoll: prev.investigators.map(inv => ({
-            name: inv.name,
-            gatesClosed: inv.trophies.gates.length,
-            monsterTrophies: inv.trophies.monsters.length
-          }))
+          reason: 'The Doom Factor reached the Doom of Arkham! The walls between worlds collapsed and the Ancient Ones devoured the earth.',
+          honorRoll
         }
-      }));
-      return;
-    }
-
-    // Defeat: Gates limit (8 for 1-3 players, 7 for 4 players)
-    const maxGatesAllowed = gameState.investigators.length <= 3 ? 8 : 7;
-    if (gameState.openGates.length >= maxGatesAllowed) {
-      setGameState(prev => ({
-        ...prev,
+      });
+    } else if (s.openGates.length >= maxGatesAllowed) {
+      commit({
+        ...s,
         currentPhase: 'GAME_OVER',
         winner: {
           isVictory: false,
-          reason: `Too many dimensional gates (${gameState.openGates.length}) opened simultaneously across Arkham! The town was swallowed whole.`,
-          honorRoll: prev.investigators.map(inv => ({
-            name: inv.name,
-            gatesClosed: inv.trophies.gates.length,
-            monsterTrophies: inv.trophies.monsters.length
-          }))
+          reason: `Too many gates (${s.openGates.length}) stand open across Arkham at once! The town was swallowed whole.`,
+          honorRoll
         }
-      }));
+      });
     }
-  }, [gameState.openGates.length, gameState.doomTrack, gameState.turnNumber]);
-
-  // Update reachable nodes whenever movement roll occurs or moves remaining changes
-  useEffect(() => {
-    if (gameState.hasRolledMovement && gameState.movesRemaining > 0 && activeInvestigator) {
-      const nodes = getAvailableMoveNodes(
-        activeInvestigator.locationNodeId,
-        gameState.movesRemaining,
-        gameState.activeMonsters
-      );
-      setReachableNodes(nodes);
-      setAdjacentNodes(getNeighbors(activeInvestigator.locationNodeId));
-    } else {
-      setReachableNodes([]);
-      setAdjacentNodes([]);
-    }
-  }, [gameState.hasRolledMovement, gameState.movesRemaining, activeInvestigator?.locationNodeId]);
+  }, [gameState.openGates.length, gameState.doomTrack, gameState.turnNumber, commit]);
 
   // -------------------------------------------------------------
-  // ACTION HANDLERS
+  // Movement
   // -------------------------------------------------------------
-
-  // 1. Roll Movement (2D6) with 3D physical dice tray
-  const handleRollMovement = () => {
-    if (!activeInvestigator) return;
-    const { d1, d2, sum } = roll2D6();
-    let totalMoves = sum;
-
-    // Check for Motorcycle bonus
-    if (activeInvestigator.items.some(i => i.specialEffect === 'motorcycle_move')) {
-      totalMoves += 2;
+  const reachableNodes = useMemo(() => {
+    if (gameState.currentPhase !== 'INVESTIGATOR_MOVE' || gameState.movesRemaining <= 0 || !activeInvestigator || isMoving) {
+      return [];
     }
-
-    setDiceRollerData({
-      dice: [d1, d2],
-      title: 'Movement Roll (2D6)',
-      description: `${totalMoves} spaces available to traverse across Arkham.`
-    });
-    setIsDiceRollerOpen(true);
-
-    addLog(`${activeInvestigator.name} rolled movement: [${d1}, ${d2}] = ${totalMoves} spaces.`);
-
-    setGameState(prev => ({
-      ...prev,
-      movesRemaining: totalMoves,
-      hasRolledMovement: true,
-      lastDiceRoll: {
-        type: 'Movement Roll',
-        dice: [d1, d2],
-        sum: totalMoves,
-        description: `${totalMoves} spaces available to traverse.`
-      }
-    }));
-  };
-
-  // 2. Click node or location to move plastic pawn along streets
-  const handleNodeClick = (targetNodeId: string) => {
-    if (!activeInvestigator || !gameState.hasRolledMovement || gameState.movesRemaining <= 0 || isMovingAnimation) return;
-    if (!reachableNodes.includes(targetNodeId)) return;
-    if (targetNodeId === activeInvestigator.locationNodeId) return;
-
-    const monsterNodeIds = gameState.activeMonsters.map(m => m.currentNodeId);
-    const path = findShortestPath(
-      activeInvestigator.locationNodeId,
-      targetNodeId,
-      gameState.movesRemaining,
-      monsterNodeIds
+    return getAvailableMoveNodes(activeInvestigator.locationNodeId, gameState.movesRemaining, gameState.activeMonsters).filter(
+      n => n !== activeInvestigator.locationNodeId
     );
+  }, [gameState.currentPhase, gameState.movesRemaining, gameState.activeMonsters, activeInvestigator?.locationNodeId, isMoving]);
 
+  const handleRollMovement = () => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv || s.currentPhase !== 'INVESTIGATOR_START') return;
+    const { d1, d2, sum } = roll2D6();
+    const motorcycle = inv.items.some(i => i.specialEffect === 'motorcycle_move') ? 2 : 0;
+    const bonus = inv.moveBonus || 0;
+    const total = Math.max(1, sum + motorcycle + bonus);
+    const extras = [motorcycle && '+2 motorcycle', bonus && `${bonus > 0 ? '+' : ''}${bonus} ${bonus > 0 ? 'bonus' : 'delay'}`]
+      .filter(Boolean)
+      .join(', ');
+
+    setDice({
+      open: true,
+      dice: [d1, d2],
+      title: 'Movement Roll',
+      description: `${total} spaces to move${extras ? ` (${extras})` : ''}.`
+    });
+
+    let n = patchInvestigator(s, s.activeInvestigatorIndex, i => ({ ...i, moveBonus: 0 }));
+    n = addLog(n, `${inv.name} rolled [${d1}, ${d2}]${extras ? ` ${extras}` : ''} = ${total} moves.`);
+    commit({
+      ...n,
+      currentPhase: 'INVESTIGATOR_MOVE',
+      movesRemaining: total,
+      hasRolledMovement: true,
+      lastDiceRoll: { type: 'Movement', dice: [d1, d2], sum: total, description: `${total} spaces` }
+    });
+  };
+
+  const finishMove = (investigatorId: string, walk: string[]) => {
+    const s = cur();
+    const idx = getInvestigatorIndex(s, investigatorId);
+    const inv = s.investigators[idx];
+    if (!inv || walk.length === 0) return;
+    const final = walk[walk.length - 1];
+    const remaining = Math.max(0, s.movesRemaining - walk.length);
+    let n = patchInvestigator(s, idx, i => ({ ...i, locationNodeId: final, previousNodeId: i.locationNodeId }));
+    n = addLog(n, `${inv.name} moved ${walk.length} space${walk.length > 1 ? 's' : ''} to ${getNodeDisplayLabel(final)}.`);
+
+    const monster = n.activeMonsters.find(m => m.currentNodeId === final);
+    if (monster) {
+      n = addLog(n, `Movement halted! ${inv.name} runs into ${monster.name}!`, 'combat');
+      commit({ ...n, movesRemaining: 0, currentPhase: 'INVESTIGATOR_COMBAT' });
+      setCombat({ monster, investigatorId, context: 'turn', resumeMoves: remaining });
+      return;
+    }
+    commit({
+      ...n,
+      movesRemaining: remaining,
+      currentPhase: remaining > 0 ? 'INVESTIGATOR_MOVE' : 'INVESTIGATOR_ENCOUNTER'
+    });
+  };
+
+  const handleNodeClick = (targetNodeId: string) => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv || s.currentPhase !== 'INVESTIGATOR_MOVE' || isMoving) return;
+    if (!reachableNodes.includes(targetNodeId)) return;
+
+    const monsterNodes = s.activeMonsters.map(m => m.currentNodeId);
+    const path = findShortestPath(inv.locationNodeId, targetNodeId, s.movesRemaining, monsterNodes);
     if (!path || path.length < 2) return;
-
-    // Path steps (excluding starting node)
     const steps = path.slice(1);
-    const stepsToTake = steps.length;
+    const haltAt = steps.findIndex(nodeId => s.activeMonsters.some(m => m.currentNodeId === nodeId));
+    const walk = haltAt >= 0 ? steps.slice(0, haltAt + 1) : steps;
 
-    // 1-step move: instantaneous with pawn clack sound
-    if (stepsToTake === 1) {
-      const nextNode = steps[0];
-      const updatedInvestigators = [...gameState.investigators];
-      const current = updatedInvestigators[gameState.activeInvestigatorIndex];
-      current.locationNodeId = nextNode;
-
+    if (walk.length === 1) {
       sound.playStep();
-      addLog(`${current.name} stepped to ${getNodeDisplayLabel(nextNode)}.`);
-
-      // Check if monster in this space: halt immediately!
-      const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === nextNode);
-      if (monstersHere.length > 0) {
-        addLog(`Horror encountered! ${current.name} must halt and confront ${monstersHere[0].name}!`, 'combat');
-        setGameState(prev => ({
-          ...prev,
-          investigators: updatedInvestigators,
-          movesRemaining: 0,
-          currentPhase: 'INVESTIGATOR_COMBAT'
-        }));
-        setActiveCombatMonster(monstersHere[0]);
-        return;
-      }
-
-      const remaining = gameState.movesRemaining - 1;
-      if (remaining <= 0) {
-        setGameState(prev => ({
-          ...prev,
-          investigators: updatedInvestigators,
-          movesRemaining: 0,
-          currentPhase: 'INVESTIGATOR_ENCOUNTER'
-        }));
-      } else {
-        setGameState(prev => ({
-          ...prev,
-          investigators: updatedInvestigators,
-          movesRemaining: remaining
-        }));
-      }
+      finishMove(inv.id, walk);
       return;
     }
 
-    // Multi-step move: animate plastic pawn hopping space-by-space along the road!
-    setIsMovingAnimation(true);
-    let stepIndex = 0;
-
-    const interval = setInterval(() => {
-      if (stepIndex < steps.length) {
-        const stepNode = steps[stepIndex];
+    // Hop the pawn space-by-space, then commit once at the end
+    let i = 0;
+    setMovingPawn({ investigatorId: inv.id, currentNodeId: walk[0] });
+    sound.playStep();
+    moveTimer.current = setInterval(() => {
+      i += 1;
+      if (i < walk.length) {
         sound.playStep();
-
-        setMovingPawn({
-          investigatorId: activeInvestigator.id,
-          currentNodeId: stepNode
-        });
-
-        // Check if monster in this space: halt immediately!
-        const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === stepNode);
-        if (monstersHere.length > 0) {
-          clearInterval(interval);
-          setIsMovingAnimation(false);
-          setMovingPawn(null);
-
-          const updatedInvestigators = [...gameState.investigators];
-          updatedInvestigators[gameState.activeInvestigatorIndex].locationNodeId = stepNode;
-
-          addLog(`Movement halted! ${activeInvestigator.name} ran into ${monstersHere[0].name} at ${getNodeDisplayLabel(stepNode)}!`, 'combat');
-          setGameState(prev => ({
-            ...prev,
-            investigators: updatedInvestigators,
-            movesRemaining: 0,
-            currentPhase: 'INVESTIGATOR_COMBAT'
-          }));
-          setActiveCombatMonster(monstersHere[0]);
-          return;
-        }
-
-        stepIndex++;
-      } else {
-        // Finished moving full path
-        clearInterval(interval);
-        setIsMovingAnimation(false);
-        setMovingPawn(null);
-
-        const finalNode = steps[steps.length - 1];
-        const updatedInvestigators = [...gameState.investigators];
-        updatedInvestigators[gameState.activeInvestigatorIndex].locationNodeId = finalNode;
-
-        const remainingMoves = Math.max(0, gameState.movesRemaining - stepsToTake);
-        addLog(`${activeInvestigator.name} walked ${stepsToTake} spaces to ${getNodeDisplayLabel(finalNode)}.`);
-
-        // Final space monster check
-        const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === finalNode);
-        if (monstersHere.length > 0) {
-          setGameState(prev => ({
-            ...prev,
-            investigators: updatedInvestigators,
-            movesRemaining: 0,
-            currentPhase: 'INVESTIGATOR_COMBAT'
-          }));
-          setActiveCombatMonster(monstersHere[0]);
-          return;
-        }
-
-        if (remainingMoves <= 0) {
-          setGameState(prev => ({
-            ...prev,
-            investigators: updatedInvestigators,
-            movesRemaining: 0,
-            currentPhase: 'INVESTIGATOR_ENCOUNTER'
-          }));
-        } else {
-          setGameState(prev => ({
-            ...prev,
-            investigators: updatedInvestigators,
-            movesRemaining: remainingMoves
-          }));
-        }
+        setMovingPawn({ investigatorId: inv.id, currentNodeId: walk[i] });
+        return;
       }
-    }, 160);
+      if (moveTimer.current) clearInterval(moveTimer.current);
+      moveTimer.current = null;
+      setMovingPawn(null);
+      finishMove(inv.id, walk);
+    }, 140);
   };
 
-  // Stop movement early
   const handleEndMovementEarly = () => {
-    addLog(`${activeInvestigator.name} stopped movement at ${getNodeDisplayLabel(activeInvestigator.locationNodeId)}.`);
-    setGameState(prev => ({
-      ...prev,
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv || isMoving) return;
+    commit({
+      ...addLog(s, `${inv.name} stops at ${getNodeDisplayLabel(inv.locationNodeId)}.`),
       movesRemaining: 0,
       currentPhase: 'INVESTIGATOR_ENCOUNTER'
-    }));
+    });
   };
 
-  // Click on a Location building
-  const handleLocationClick = (locId: string) => {
-    const locNodeId = getNodeForLocation(locId);
-
-    // If moving and this location is reachable, move right to it!
-    if (locNodeId && reachableNodes.includes(locNodeId) && gameState.hasRolledMovement) {
-      handleNodeClick(locNodeId);
-      return;
-    }
-
-    // If active investigator is currently at this location:
-    const activeLocId = getLocationIdForNode(activeInvestigator.locationNodeId) || activeInvestigator.locationNodeId;
-    if (activeLocId === locId) {
-      // Check for gate
-      const gateHere = gameState.openGates.find(g => g.locationId === locId);
-      if (gateHere) {
-        setActiveGateModal(gateHere);
-        return;
-      }
-      // If in encounter phase, draw encounter!
-      if (gameState.currentPhase === 'INVESTIGATOR_ENCOUNTER') {
-        handleDrawEncounter();
-      }
-    }
-  };
-
-  // Take Taxi ($1 fast travel)
-  const handleSelectTaxiDestination = (destNodeId: string) => {
-    if (!activeInvestigator || activeInvestigator.money < 1) return;
-
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-    inv.money -= 1;
-    inv.locationNodeId = destNodeId;
-
-    const destName = getNodeDisplayLabel(destNodeId);
-    addLog(`${inv.name} paid $1 and took an Arkham Yellow Cab to ${destName}.`);
-
-    setIsTaxiOpen(false);
-
-    // Check if monster in this space
-    const monstersHere = gameState.activeMonsters.filter(m => m.currentNodeId === destNodeId);
-    if (monstersHere.length > 0) {
-      addLog(`Ambushed upon arrival! ${inv.name} faces ${monstersHere[0].name}!`, 'combat');
-      setGameState(prev => ({
-        ...prev,
-        investigators: updated,
-        movesRemaining: 0,
-        hasRolledMovement: true,
-        currentPhase: 'INVESTIGATOR_COMBAT'
-      }));
-      setActiveCombatMonster(monstersHere[0]);
-    } else {
-      setGameState(prev => ({
-        ...prev,
-        investigators: updated,
-        movesRemaining: 0,
-        hasRolledMovement: true,
-        currentPhase: 'INVESTIGATOR_ENCOUNTER'
-      }));
-    }
-  };
-
-  // Wait / Stay in space
   const handleWaitAction = () => {
-    if (!activeInvestigator) return;
-    addLog(`${activeInvestigator.name} chooses to wait and observe surroundings.`);
-    setGameState(prev => ({
-      ...prev,
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv) return;
+    commit({
+      ...addLog(s, `${inv.name} stays at ${getNodeDisplayLabel(inv.locationNodeId)}.`),
       hasRolledMovement: true,
       movesRemaining: 0,
       currentPhase: 'INVESTIGATOR_ENCOUNTER'
-    }));
+    });
   };
 
-  // Draw location encounter (D6 on Location Table)
-  const handleDrawEncounter = () => {
-    if (!activeInvestigator) return;
-    const activeNodeId = activeInvestigator.locationNodeId;
-    const locId = getLocationIdForNode(activeNodeId) || activeNodeId;
-    const location = LOCATIONS_DATA[locId];
+  const handleSelectTaxiDestination = (destNodeId: string) => {
+    const mode = taxiMode;
+    setTaxiMode(null);
+    const s = cur();
+    const idx = s.activeInvestigatorIndex;
+    const inv = s.investigators[idx];
+    if (!inv || !mode) return;
+    if (mode === 'paid' && inv.money < 1) return;
 
-    if (!location) {
-      addLog(`${activeInvestigator.name} is resting on an empty street space. No location encounter.`);
+    let n = patchInvestigator(s, idx, i => ({
+      ...i,
+      money: mode === 'paid' ? i.money - 1 : i.money,
+      locationNodeId: destNodeId
+    }));
+    const how = mode === 'paid' ? 'paid $1 for a cab' : mode === 'car' ? 'drove the Automobile' : 'accepted the ride';
+    n = addLog(n, `${inv.name} ${how} to ${getNodeDisplayLabel(destNodeId)}.`);
+    const monster = n.activeMonsters.find(m => m.currentNodeId === destNodeId);
+    n = { ...n, hasRolledMovement: true, movesRemaining: 0 };
+    if (monster) {
+      n = addLog(n, `Ambushed on arrival! ${inv.name} faces ${monster.name}!`, 'combat');
+      commit({ ...n, currentPhase: 'INVESTIGATOR_COMBAT' });
+      setCombat({ monster, investigatorId: inv.id, context: 'turn' });
+      return;
+    }
+    commit({ ...n, currentPhase: 'INVESTIGATOR_ENCOUNTER' });
+  };
+
+  // -------------------------------------------------------------
+  // Turn order
+  // -------------------------------------------------------------
+  const handleEndInvestigatorTurn = () => {
+    const s = cur();
+    if (s.currentPhase === 'GAME_OVER') return;
+    const nextIdx = s.activeInvestigatorIndex + 1;
+    if (nextIdx < s.investigators.length) {
+      commit(beginInvestigatorTurn(s, nextIdx));
+    } else {
+      const n = addLog(s, 'All investigators have acted. The Mythos Phase begins!', 'mythos');
+      commit({ ...n, currentPhase: 'MYTHOS_GATES', hasRolledMovement: false, movesRemaining: 0, evadedMonsterIds: [] });
+    }
+  };
+
+  const completeRound = () => {
+    const s = cur();
+    let n = addLog({ ...s, turnNumber: s.turnNumber + 1 }, `Mythos Phase ends. Turn ${s.turnNumber + 1} begins.`, 'system');
+    n = beginInvestigatorTurn(n, 0);
+    commit(n);
+  };
+
+  // -------------------------------------------------------------
+  // Encounters
+  // -------------------------------------------------------------
+  const startLocationEncounter = (locId: string) => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    const loc = LOCATIONS_DATA[locId];
+    if (!inv || !loc) return;
+    const roll = rollD6();
+    const event = loc.events[roll] || loc.events[1];
+    sound.playDiceRoll();
+    commit(addLog(s, `${inv.name} rolls ${roll} at ${loc.name}: "${event.text}"`, 'event'));
+    setEncounter({
+      uid: ++encounterSeq.current,
+      kind: 'location',
+      investigatorId: inv.id,
+      locationId: locId,
+      title: loc.name,
+      subtitle: loc.description,
+      roll,
+      event,
+      options: buildEncounterOptions(event, inv, s, { locationId: locId })
+    });
+  };
+
+  const startOtherWorldEncounter = (worldId: OtherWorldId, endsTurn: boolean) => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    const world = OTHER_WORLDS[worldId];
+    if (!inv || !world) return;
+    const roll = rollD6();
+    const text = world.table[roll];
+    const event: LocationEvent = { roll, text, type: 'special' };
+    sound.playEldritchPortal();
+    commit(addLog(s, `${inv.name} rolls ${roll} in ${world.name}: "${text}"`, 'event'));
+    setEncounter({
+      uid: ++encounterSeq.current,
+      kind: 'otherworld',
+      investigatorId: inv.id,
+      worldId,
+      endsTurn,
+      title: world.name,
+      subtitle: world.description,
+      roll,
+      event,
+      options: buildEncounterOptions(event, inv, s, { otherWorld: true })
+    });
+  };
+
+  const handleDrawEncounter = () => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv || s.hasTakenActionThisTurn) return;
+    const locId = getLocationIdForNode(inv.locationNodeId);
+    if (!locId) return;
+    if (s.openGates.some(g => g.locationId === locId)) {
+      setGateModalId(s.openGates.find(g => g.locationId === locId)!.id);
+      return;
+    }
+    startLocationEncounter(locId);
+  };
+
+  const handleExploreOtherWorld = () => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv?.otherWorldState) return;
+    if (inv.items.some(i => i.specialEffect === 'silver_key')) {
+      commit({ ...addLog(s, `${inv.name}'s Silver Key guides them safely through the Other World.`), hasTakenActionThisTurn: true });
       handleEndInvestigatorTurn();
       return;
     }
+    startOtherWorldEncounter(inv.otherWorldState.worldId as OtherWorldId, true);
+  };
 
-    // Check if open gate here
-    const gateHere = gameState.openGates.find(g => g.locationId === locId);
-    if (gateHere) {
-      setActiveGateModal(gateHere);
-      return;
-    }
+  const handleResolveEncounter = (outcome: Outcome | undefined, cost: number, summary: string) => {
+    const enc = encounter;
+    setEncounter(null);
+    if (!enc) return;
+    const s = cur();
+    const idx = getInvestigatorIndex(s, enc.investigatorId);
+    const inv = s.investigators[idx];
+    if (!inv) return;
 
-    // Roll D6 on location table
-    const roll = rollD6();
-    const event = location.events[roll] || location.events[1];
-
-    addLog(`${activeInvestigator.name} rolls on the ${location.name} Gazette table: [${roll}] - "${event.text}"`, 'event');
-
-    setActiveEncounter({
-      locationId: locId,
-      roll,
-      event
+    const res = applyOutcome(addLog(s, `${inv.name}: ${summary}.`, 'event'), idx, outcome, {
+      locationId: enc.locationId,
+      otherWorld: enc.kind === 'otherworld',
+      cost
     });
-  };
+    let n: GameState = { ...res.state, hasTakenActionThisTurn: true };
+    const follow = res.follow;
 
-  // Resolve Location Encounter Modal
-  const handleResolveEncounter = (event: LocationEvent) => {
-    if (!activeInvestigator || !activeEncounter) return;
-
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-    const rewards = event.reward;
-
-    if (rewards) {
-      if (rewards.strength) {
-        inv.strength = Math.min(inv.maxStrength, inv.strength + rewards.strength);
-        addLog(`${inv.name} received ${rewards.strength > 0 ? '+' : ''}${rewards.strength} Strength.`);
-      }
-      if (rewards.sanity) {
-        inv.sanity = Math.min(inv.maxSanity, inv.sanity + rewards.sanity);
-        addLog(`${inv.name} received ${rewards.sanity > 0 ? '+' : ''}${rewards.sanity} Sanity.`);
-      }
-      if (rewards.money) {
-        inv.money = Math.max(0, inv.money + rewards.money);
-        addLog(`${inv.name} received $${rewards.money}.`);
-      }
-      if (rewards.itemsCount && gameState.itemDeck.length > 0) {
-        const drawn = gameState.itemDeck.slice(0, rewards.itemsCount);
-        inv.items.push(...drawn);
-        setGameState(prev => ({
-          ...prev,
-          itemDeck: prev.itemDeck.slice(rewards.itemsCount)
-        }));
-        addLog(`${inv.name} acquired item: ${drawn.map(i => i.name).join(', ')}.`);
-      }
-      if (rewards.spellsCount && gameState.spellDeck.length > 0) {
-        const drawn = gameState.spellDeck.slice(0, rewards.spellsCount);
-        inv.spells.push(...drawn);
-        setGameState(prev => ({
-          ...prev,
-          spellDeck: prev.spellDeck.slice(rewards.spellsCount)
-        }));
-        addLog(`${inv.name} learned spell: ${drawn.map(s => s.name).join(', ')}.`);
-      }
-      if (rewards.gateSpawn) {
-        spawnGateAtLocation(activeEncounter.locationId);
-      }
-      if (rewards.monsterSpawn) {
-        const cup = [...gameState.monsterCup];
-        if (cup.length > 0) {
-          const m = cup.pop()!;
-          const targetNode = getNodeForLocation(activeEncounter.locationId) || activeInvestigator.locationNodeId;
-          m.currentNodeId = targetNode;
-          setGameState(prev => ({
-            ...prev,
-            activeMonsters: [...prev.activeMonsters, m],
-            monsterCup: cup
-          }));
-          addLog(`A monster spawned at ${LOCATIONS_DATA[activeEncounter.locationId]?.name}!`, 'mythos');
-        }
-      }
-    }
-
-    setActiveEncounter(null);
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      hasTakenActionThisTurn: true
-    }));
-  };
-
-  // Spawn Gate helper
-  const spawnGateAtLocation = (locId: string) => {
-    const loc = LOCATIONS_DATA[locId];
-    if (!loc) return;
-
-    // Check if gate already exists
-    if (gameState.openGates.some(g => g.locationId === locId)) {
-      addLog(`Gate already present at ${loc.name}. An extra monster emerges!`, 'mythos');
+    if (follow.knockedOut) {
+      commit(n);
+      handleEndInvestigatorTurn();
       return;
     }
-
-    const worldKeys: OtherWorldId[] = [
-      'abyss',
-      'another_dimension',
-      'city_of_great_race',
-      'earths_dreamlands',
-      'great_hall_of_celeano',
-      'plateau_of_leng',
-      'rlyeh',
-      'yuggoth'
-    ];
-    const randomWorld = worldKeys[Math.floor(Math.random() * worldKeys.length)];
-
-    const newGate: Gate = {
-      id: `gate_${Date.now()}`,
-      locationId: locId,
-      otherWorldId: randomWorld,
-      strength: 5
-    };
-
-    addLog(`Dimensional vortex tore open at ${loc.name} connecting to ${OTHER_WORLDS[randomWorld].name}!`, 'mythos');
-    sound.playEldritchPortal();
-
-    setGameState(prev => ({
-      ...prev,
-      openGates: [...prev.openGates, newGate],
-      doomTrack: Math.min(prev.maxDoom, prev.doomTrack + 1)
-    }));
-  };
-
-  // Enter Gate into Other World
-  const handleEnterGate = () => {
-    if (!activeInvestigator || !activeGateModal) return;
-
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-
-    inv.otherWorldState = {
-      worldId: activeGateModal.otherWorldId,
-      box: 2,
-      turnsRemaining: 2
-    };
-
-    const worldName = OTHER_WORLDS[activeGateModal.otherWorldId as OtherWorldId]?.name || activeGateModal.otherWorldId;
-    addLog(`${inv.name} stepped into the shimmering portal and entered ${worldName} (Box 2)!`, 'mythos');
-
-    setActiveGateModal(null);
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      hasTakenActionThisTurn: true
-    }));
-  };
-
-  // Destroy Gate in combat
-  const handleDestroyGate = () => {
-    if (!activeInvestigator || !activeGateModal) return;
-
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-
-    inv.trophies.gates.push(activeGateModal);
-
-    addLog(`${inv.name} obliterated the dimensional gate at ${LOCATIONS_DATA[activeGateModal.locationId]?.name}!`, 'combat');
-    sound.playCombatStrike(true);
-
-    const remainingGates = gameState.openGates.filter(g => g.id !== activeGateModal.id);
-
-    setActiveGateModal(null);
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      openGates: remainingGates,
-      hasTakenActionThisTurn: true
-    }));
-  };
-
-  // Seal with Elder Sign
-  const handleSealWithElderSign = () => {
-    if (!activeInvestigator || !activeGateModal) return;
-
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-
-    const elderSignIdx = inv.items.findIndex(i => i.specialEffect === 'seal_gate');
-    if (elderSignIdx !== -1) {
-      inv.items.splice(elderSignIdx, 1);
-    }
-
-    inv.sanity = Math.max(1, inv.sanity - 2);
-    inv.trophies.gates.push(activeGateModal);
-
-    addLog(`${inv.name} spent 2 Sanity points and inscribed an Elder Sign at ${LOCATIONS_DATA[activeGateModal.locationId]?.name}! The gate is permanently sealed!`, 'combat');
-    sound.playCombatStrike(true);
-
-    const remainingGates = gameState.openGates.filter(g => g.id !== activeGateModal.id);
-
-    setActiveGateModal(null);
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      openGates: remainingGates,
-      doomTrack: Math.max(0, prev.doomTrack - 1),
-      hasTakenActionThisTurn: true
-    }));
-  };
-
-  // Combat victory
-  const handleCombatVictory = (trophy: Monster) => {
-    const updated = [...gameState.investigators];
-    const inv = updated[gameState.activeInvestigatorIndex];
-
-    inv.trophies.monsters.push(trophy);
-    addLog(`${inv.name} defeated ${trophy.name} and claimed its trophy!`, 'combat');
-
-    const remainingMonsters = gameState.activeMonsters.filter(m => m.id !== trophy.id);
-
-    setActiveCombatMonster(null);
-    setGameState(prev => ({
-      ...prev,
-      investigators: updated,
-      activeMonsters: remainingMonsters,
-      hasTakenActionThisTurn: true
-    }));
-  };
-
-  // End active investigator's turn
-  const handleEndInvestigatorTurn = () => {
-    const nextIdx = gameState.activeInvestigatorIndex + 1;
-
-    if (nextIdx < gameState.investigators.length) {
-      // Advance to next investigator
-      const nextInv = gameState.investigators[nextIdx];
-      addLog(`It is now ${nextInv.name}'s turn.`, 'action');
-
-      // Check if in Other World -> advance progression (Box 2 -> Box 1 -> Return)
-      const updated = [...gameState.investigators];
-      if (nextInv.otherWorldState) {
-        if (nextInv.otherWorldState.box === 2) {
-          nextInv.otherWorldState.box = 1;
-          const world = OTHER_WORLDS[nextInv.otherWorldState.worldId as OtherWorldId];
-          addLog(`${nextInv.name} advanced to Box 1 in ${world?.name || nextInv.otherWorldState.worldId}.`);
-        } else if (nextInv.otherWorldState.box === 1) {
-          nextInv.otherWorldState = undefined;
-          addLog(`${nextInv.name} safely returned through the gate to Arkham!`);
-        }
+    if (follow.combatMonsterId) {
+      const monster = n.activeMonsters.find(m => m.id === follow.combatMonsterId);
+      if (monster) {
+        commit({ ...n, currentPhase: 'INVESTIGATOR_COMBAT' });
+        setCombat({ monster, investigatorId: inv.id, context: 'turn' });
+        return;
       }
-
-      setGameState(prev => ({
-        ...prev,
-        investigators: updated,
-        activeInvestigatorIndex: nextIdx,
-        currentPhase: 'INVESTIGATOR_START',
-        hasRolledMovement: false,
-        movesRemaining: 0,
-        hasTakenActionThisTurn: false
-      }));
-      setSelectedInvestigatorIdx(nextIdx);
-    } else {
-      // All investigators finished turn -> Trigger Mythos Phase
-      addLog(`All investigators have completed actions. The Mythos Phase begins!`, 'mythos');
-      setGameState(prev => ({
-        ...prev,
-        currentPhase: 'MYTHOS_GATES',
-        hasRolledMovement: false,
-        movesRemaining: 0
-      }));
     }
+    if (follow.otherWorldMonster && n.monsterCup.length > 0) {
+      const monster = n.monsterCup[Math.floor(Math.random() * n.monsterCup.length)];
+      commit(addLog(n, `${monster.name} attacks ${inv.name} in the Other World!`, 'combat'));
+      setCombat({ monster, investigatorId: inv.id, context: 'otherworld' });
+      return;
+    }
+    commit(n);
+
+    if (follow.teleportAny) {
+      setTaxiMode('free');
+      return;
+    }
+    if (follow.encounterAt) {
+      const nodeInv = n.investigators[idx];
+      const monster = n.activeMonsters.find(m => m.currentNodeId === nodeInv.locationNodeId);
+      if (monster) {
+        commit({ ...n, currentPhase: 'INVESTIGATOR_COMBAT' });
+        setCombat({ monster, investigatorId: inv.id, context: 'turn' });
+      } else {
+        startLocationEncounter(follow.encounterAt);
+      }
+      return;
+    }
+    if (follow.dreamlands) {
+      startOtherWorldEncounter('earths_dreamlands', false);
+      return;
+    }
+    if (enc.endsTurn) handleEndInvestigatorTurn();
   };
 
   // -------------------------------------------------------------
-  // MYTHOS PHASE PROGRESSION
+  // Gates
+  // -------------------------------------------------------------
+  const activeGate = gameState.openGates.find(g => g.id === gateModalId) || null;
+
+  const handleEnterGate = () => {
+    const gate = activeGate;
+    setGateModalId(null);
+    const s = cur();
+    const idx = s.activeInvestigatorIndex;
+    const inv = s.investigators[idx];
+    if (!gate || !inv) return;
+    let n = patchInvestigator(s, idx, i => ({
+      ...i,
+      otherWorldState: { worldId: gate.otherWorldId, box: 2, turnsRemaining: 2, gateLocationId: gate.locationId }
+    }));
+    const world = OTHER_WORLDS[gate.otherWorldId as OtherWorldId];
+    n = addLog(n, `${inv.name} steps through the gate into ${world?.name} (Box 2).`, 'mythos');
+    commit({ ...n, hasTakenActionThisTurn: true });
+    if (inv.items.some(i => i.specialEffect === 'silver_key')) {
+      handleEndInvestigatorTurn();
+      return;
+    }
+    startOtherWorldEncounter(gate.otherWorldId as OtherWorldId, true);
+  };
+
+  const handleDestroyGate = () => {
+    const gate = activeGate;
+    setGateModalId(null);
+    const s = cur();
+    if (!gate) return;
+    const idx = s.activeInvestigatorIndex;
+    let n = removeGate(s, gate.id, idx, false);
+    n = addLog(n, `${s.investigators[idx].name} destroys the gate at ${LOCATIONS_DATA[gate.locationId]?.name}!`, 'combat');
+    sound.playCombatStrike(true);
+    commit({ ...n, hasTakenActionThisTurn: true });
+  };
+
+  const handleSealWithElderSign = () => {
+    const gate = activeGate;
+    setGateModalId(null);
+    const s = cur();
+    if (!gate) return;
+    const idx = s.activeInvestigatorIndex;
+    const inv = s.investigators[idx];
+    const sign = inv.items.find(i => i.specialEffect === 'seal_gate');
+    if (!sign || inv.sanity < 2) return;
+    let n = patchInvestigator(s, idx, i => ({
+      ...i,
+      items: i.items.filter(c => c.id !== sign.id),
+      sanity: Math.max(1, i.sanity - 2)
+    }));
+    n = removeGate(n, gate.id, idx, true);
+    n = addLog(n, `${inv.name} seals the gate at ${LOCATIONS_DATA[gate.locationId]?.name} with an Elder Sign! Doom recedes.`, 'combat');
+    sound.playCombatStrike(true);
+    commit({ ...n, hasTakenActionThisTurn: true });
+  };
+
+  const handleGateAttackFailed = () => {
+    setGateModalId(null);
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    commit({ ...addLog(s, `${inv.name}'s assault on the gate fails.`, 'combat'), hasTakenActionThisTurn: true });
+  };
+
+  // -------------------------------------------------------------
+  // Combat
+  // -------------------------------------------------------------
+  const combatInvestigator = combat ? gameState.investigators.find(i => i.id === combat.investigatorId) : undefined;
+
+  const continueMythosAttacks = () => {
+    const s = cur();
+    while (mythosQueue.current.length > 0) {
+      const next = mythosQueue.current.shift()!;
+      const inv = s.investigators.find(i => i.id === next.investigatorId);
+      const monster = s.activeMonsters.find(m => m.id === next.monsterId);
+      if (inv && monster && !inv.otherWorldState && monster.currentNodeId === inv.locationNodeId) {
+        commit(addLog(s, `${monster.name} attacks ${inv.name}!`, 'combat'));
+        setSelectedInvestigatorIdx(getInvestigatorIndex(s, inv.id));
+        setCombat({ monster, investigatorId: inv.id, context: 'mythos' });
+        return;
+      }
+    }
+    completeRound();
+  };
+
+  const afterCombat = (ctx: CombatState, result: 'win' | 'flee' | 'ko') => {
+    setCombat(null);
+    if (ctx.context === 'mythos') {
+      continueMythosAttacks();
+      return;
+    }
+    if (ctx.context === 'otherworld') {
+      handleEndInvestigatorTurn();
+      return;
+    }
+    // Investigator phase
+    if (result === 'ko') {
+      handleEndInvestigatorTurn();
+      return;
+    }
+    const s = cur();
+    const inv = s.investigators.find(i => i.id === ctx.investigatorId);
+    const moreMonsters = inv
+      ? s.activeMonsters.some(m => m.currentNodeId === inv.locationNodeId && !s.evadedMonsterIds.includes(m.id))
+      : false;
+    if (!moreMonsters && (ctx.resumeMoves || 0) > 0) {
+      commit({ ...s, currentPhase: 'INVESTIGATOR_MOVE', movesRemaining: ctx.resumeMoves! });
+    } else {
+      commit({ ...s, currentPhase: 'INVESTIGATOR_ENCOUNTER', movesRemaining: 0 });
+    }
+  };
+
+  const handleCombatVictory = (monster: Monster) => {
+    const ctx = combat;
+    if (!ctx) return;
+    const s = cur();
+    const idx = getInvestigatorIndex(s, ctx.investigatorId);
+    let n: GameState = {
+      ...s,
+      activeMonsters: s.activeMonsters.filter(m => m.id !== monster.id),
+      monsterCup: s.monsterCup.filter(m => m.id !== monster.id)
+    };
+    n = patchInvestigator(n, idx, i => ({
+      ...i,
+      trophies: { ...i.trophies, monsters: [...i.trophies.monsters, monster] }
+    }));
+    n = addLog(n, `${s.investigators[idx].name} defeats ${monster.name} and claims its trophy!`, 'combat');
+    commit(n);
+    afterCombat(ctx, 'win');
+  };
+
+  const handleCombatFlee = () => {
+    const ctx = combat;
+    if (!ctx) return;
+    const s = cur();
+    const inv = s.investigators.find(i => i.id === ctx.investigatorId);
+    commit({
+      ...addLog(s, `${inv?.name} slips past ${ctx.monster.name}.`),
+      evadedMonsterIds: [...s.evadedMonsterIds, ctx.monster.id]
+    });
+    afterCombat(ctx, 'flee');
+  };
+
+  const handleCombatDefeat = (cause: 'strength' | 'sanity') => {
+    const ctx = combat;
+    if (!ctx) return;
+    const s = cur();
+    commit(knockOut(s, getInvestigatorIndex(s, ctx.investigatorId), cause));
+    afterCombat(ctx, 'ko');
+  };
+
+  const handleTriggerCombat = () => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    const monster = s.activeMonsters.find(
+      m => m.currentNodeId === inv?.locationNodeId && !s.evadedMonsterIds.includes(m.id)
+    );
+    if (!inv || !monster) return;
+    commit({ ...s, currentPhase: 'INVESTIGATOR_COMBAT' });
+    setCombat({ monster, investigatorId: inv.id, context: 'turn' });
+  };
+
+  // -------------------------------------------------------------
+  // Mythos phase
   // -------------------------------------------------------------
   const handleAdvanceMythos = () => {
-    if (gameState.currentPhase === 'MYTHOS_GATES') {
-      // 1. Roll on Gate Appearance Table (2D6)
+    const s = cur();
+    if (s.currentPhase === 'MYTHOS_GATES') {
       const { d1, d2, sum } = roll2D6();
       const gateInfo = GATE_APPEARANCE_TABLE[sum] || GATE_APPEARANCE_TABLE[7];
-      addLog(`Mythos Step 1: Rolled [${d1}, ${d2}] = ${sum} on Gate Appearance Table (${gateInfo.locationName}).`, 'mythos');
-
-      spawnGateAtLocation(gateInfo.locationId);
-
-      // If Founder's Rock (7) or Lake Miskatonic (10), spawn 1 monster on each currently gated location!
-      if (gateInfo.extraMonsterSpawn) {
-        addLog(`Ancient summoning! An additional monster appears at each presently gated location!`, 'mythos');
-        const cup = [...gameState.monsterCup];
-        const newMonsters: Monster[] = [];
-
-        for (const gate of gameState.openGates) {
-          if (cup.length > 0) {
-            const m = cup.pop()!;
-            const targetNode = getNodeForLocation(gate.locationId) || 'LOC_TRAIN_STATION';
-            m.currentNodeId = targetNode;
-            newMonsters.push(m);
-          }
-        }
-
-        setGameState(prev => ({
-          ...prev,
-          activeMonsters: [...prev.activeMonsters, ...newMonsters],
-          monsterCup: cup,
-          currentPhase: 'MYTHOS_MONSTERS_MOVE'
-        }));
-      } else {
-        setGameState(prev => ({
-          ...prev,
-          currentPhase: 'MYTHOS_MONSTERS_MOVE'
-        }));
+      setDice({ open: true, dice: [d1, d2], title: 'Gate Appearance', description: `${sum}: ${gateInfo.locationName}` });
+      let n = addLog(s, `Mythos: rolled [${d1}, ${d2}] = ${sum} on the Gate Appearance table — ${gateInfo.locationName}.`, 'mythos');
+      const gatedBefore = n.openGates.map(g => g.locationId).filter(id => id !== gateInfo.locationId);
+      n = openGateAt(n, gateInfo.locationId);
+      if (gateInfo.extraMonsterSpawn && gatedBefore.length > 0) {
+        n = addLog(n, 'Ancient summoning! A monster appears at every other gated location!', 'mythos');
+        for (const locId of gatedBefore) n = spawnMonsterAtLocation(n, locId).state;
       }
-    } else if (gameState.currentPhase === 'MYTHOS_MONSTERS_MOVE') {
-      // 2. All Monsters Move
-      const { updatedMonsters, logs } = executeMonsterMovement(
-        gameState.activeMonsters,
-        gameState.investigators
-      );
-
-      logs.forEach(l => addLog(l, 'mythos'));
-
-      setGameState(prev => ({
-        ...prev,
-        activeMonsters: updatedMonsters,
-        currentPhase: 'MYTHOS_MONSTERS_ATTACK'
-      }));
-    } else if (gameState.currentPhase === 'MYTHOS_MONSTERS_ATTACK') {
-      // 3. Monsters Attack investigators sharing space
-      let combatTriggered = false;
-
-      for (const inv of gameState.investigators) {
-        const monsterHere = gameState.activeMonsters.find(m => m.currentNodeId === inv.locationNodeId);
-        if (monsterHere) {
-          addLog(`${monsterHere.name} attacks ${inv.name}!`, 'combat');
-          setActiveCombatMonster(monsterHere);
-          combatTriggered = true;
-          break;
-        }
+      commit({ ...n, currentPhase: 'MYTHOS_MONSTERS_MOVE' });
+    } else if (s.currentPhase === 'MYTHOS_MONSTERS_MOVE') {
+      const { updatedMonsters, logs } = executeMonsterMovement(s.activeMonsters, s.investigators);
+      let n: GameState = { ...s, activeMonsters: updatedMonsters, currentPhase: 'MYTHOS_MONSTERS_ATTACK' };
+      if (logs.length === 0) n = addLog(n, 'The monsters lie in wait.', 'mythos');
+      for (const l of logs) n = addLog(n, l, 'mythos');
+      sound.playStep();
+      commit(n);
+    } else if (s.currentPhase === 'MYTHOS_MONSTERS_ATTACK') {
+      mythosQueue.current = [];
+      for (const inv of s.investigators) {
+        if (inv.otherWorldState) continue;
+        const monster = s.activeMonsters.find(m => m.currentNodeId === inv.locationNodeId);
+        if (monster) mythosQueue.current.push({ investigatorId: inv.id, monsterId: monster.id });
       }
-
-      if (!combatTriggered) {
-        // Round complete, start next turn
-        addLog(`Mythos Phase concludes. Game Turn ${gameState.turnNumber + 1} begins.`, 'system');
-
-        // Retainer income for first investigator
-        const updated = [...gameState.investigators];
-        if (updated[0]?.hasRetainer) {
-          updated[0].money += 2;
-        }
-
-        setGameState(prev => ({
-          ...prev,
-          investigators: updated,
-          turnNumber: prev.turnNumber + 1,
-          activeInvestigatorIndex: 0,
-          currentPhase: 'INVESTIGATOR_START',
-          hasRolledMovement: false,
-          movesRemaining: 0,
-          hasTakenActionThisTurn: false
-        }));
-        setSelectedInvestigatorIdx(0);
-      }
+      if (mythosQueue.current.length === 0) commit(addLog(s, 'No monster reaches an investigator this round.', 'mythos'));
+      continueMythosAttacks();
     }
   };
 
-  // Start New Game handler
+  // -------------------------------------------------------------
+  // Cards usable outside combat
+  // -------------------------------------------------------------
+  const canUseCard = (card: Card) => {
+    const s = gameState;
+    const inv = s.investigators[selectedInvestigatorIdx];
+    if (!inv || selectedInvestigatorIdx !== s.activeInvestigatorIndex) return false;
+    if (s.currentPhase.startsWith('MYTHOS_') || s.currentPhase === 'GAME_OVER' || combat || encounter) return false;
+    if (card.specialEffect === 'heal_strength') {
+      return inv.strength < inv.maxStrength && (card.type === 'item' || !s.usedCardIds.includes(card.id));
+    }
+    if (card.specialEffect === 'heal_sanity') {
+      return inv.sanity < inv.maxSanity && !s.usedCardIds.includes(card.id);
+    }
+    return false;
+  };
+
+  const handleUseCard = (card: Card) => {
+    if (!canUseCard(card)) return;
+    const s = cur();
+    const idx = s.activeInvestigatorIndex;
+    const inv = s.investigators[idx];
+    let n = patchInvestigator(s, idx, i => {
+      const next = { ...i };
+      if (card.specialEffect === 'heal_strength') next.strength = Math.min(i.maxStrength, i.strength + 2);
+      if (card.specialEffect === 'heal_sanity') next.sanity = Math.min(i.maxSanity, i.sanity + 2);
+      if (card.type === 'item') next.items = i.items.filter(c => c.id !== card.id);
+      return next;
+    });
+    if (card.type === 'item') n = { ...n, discardedItems: [...n.discardedItems, card] };
+    else n = { ...n, usedCardIds: [...n.usedCardIds, card.id] };
+    n = addLog(n, `${inv.name} uses ${card.name}.`);
+    commit(n);
+  };
+
+  // -------------------------------------------------------------
+  // Board clicks on locations (outside movement)
+  // -------------------------------------------------------------
+  const handleLocationClick = (locId: string) => {
+    const s = cur();
+    const inv = s.investigators[s.activeInvestigatorIndex];
+    if (!inv || getLocationIdForNode(inv.locationNodeId) !== locId) return;
+    if (s.currentPhase === 'INVESTIGATOR_ENCOUNTER' && !s.hasTakenActionThisTurn) {
+      const threatened = s.activeMonsters.some(m => m.currentNodeId === inv.locationNodeId && !s.evadedMonsterIds.includes(m.id));
+      if (threatened) handleTriggerCombat();
+      else handleDrawEncounter();
+    }
+  };
+
   const handleStartNewGame = (configs: { name: string; color: any; strength: number; sanity: number }[]) => {
-    const newState = initializeGame(configs);
-    setGameState(newState);
+    if (moveTimer.current) clearInterval(moveTimer.current);
+    setMovingPawn(null);
+    setCombat(null);
+    setEncounter(null);
+    setGateModalId(null);
+    setTaxiMode(null);
+    mythosQueue.current = [];
+    commit(initializeGame(configs));
     setSelectedInvestigatorIdx(0);
     setIsNewGameOpen(false);
   };
 
+  // -------------------------------------------------------------
+  // Keyboard: Space triggers the highlighted main action
+  // -------------------------------------------------------------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' && e.key !== ' ') return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(el.tagName)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      const btn = document.querySelector<HTMLButtonElement>('[data-primary-action]:not([disabled])');
+      if (btn) {
+        e.preventDefault();
+        btn.click();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const selectedInvestigator = gameState.investigators[selectedInvestigatorIdx];
+  const encounterInvestigator = encounter ? gameState.investigators.find(i => i.id === encounter.investigatorId) : undefined;
+
   return (
-    <div className="min-h-screen bg-[#120b07] text-[#f7efe1] flex flex-col font-sans select-none">
+    <div className="min-h-screen bg-[#120b07] text-[#f7efe1] flex flex-col font-sans select-none overflow-x-hidden">
       {/* Top Navigation Bar */}
-      <header className="bg-[#241710] border-b-2 border-[#8c6b45] px-4 py-2.5 flex items-center justify-between shadow-xl z-20">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center shadow border border-amber-400/50">
+      <header className="bg-[#241710] border-b-2 border-[#8c6b45] px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 shadow-xl z-20">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center shadow border border-amber-400/50">
             <Skull className="w-5 h-5 text-amber-100" />
           </div>
-          <div>
-            <h1 className="font-serif font-bold text-lg text-amber-200 tracking-wide leading-none">
-              ARKHAM HORROR
-            </h1>
-            <p className="text-[10px] text-[#bca58d] font-serif tracking-widest uppercase">
-              1987 Chaosium Boardgame Edition
-            </p>
+          <div className="min-w-0">
+            <h1 className="font-serif font-bold text-base sm:text-lg text-amber-200 tracking-wide leading-none">ARKHAM HORROR</h1>
+            <p className="hidden sm:block text-[10px] text-[#bca58d] font-serif tracking-widest uppercase">1987 Chaosium Boardgame Edition</p>
           </div>
         </div>
 
-        {/* Status Pills */}
-        <div className="flex items-center gap-2 text-xs">
-          <div className="bg-[#382314] px-3 py-1 rounded-full border border-[#785334] text-amber-300 font-serif font-bold">
+        <div className="order-3 sm:order-none w-full sm:w-auto flex items-center justify-center gap-1.5 sm:gap-2 text-xs">
+          <div className="bg-[#382314] px-2.5 sm:px-3 py-1 rounded-full border border-[#785334] text-amber-300 font-serif font-bold">
             Turn {gameState.turnNumber}
           </div>
-          <div className="bg-[#451616] px-3 py-1 rounded-full border border-[#882b2b] text-red-200 flex items-center gap-1 font-semibold">
-            <Skull className="w-3.5 h-3.5 text-red-400" /> Doom: {gameState.doomTrack}/14
+          <div
+            className={`px-2.5 sm:px-3 py-1 rounded-full border flex items-center gap-1 font-semibold ${
+              gameState.doomTrack >= 10 ? 'bg-red-900 border-red-500 text-red-100 animate-pulse' : 'bg-[#451616] border-[#882b2b] text-red-200'
+            }`}
+            title="Doom track — at 14 the Ancient Ones awaken"
+          >
+            <Skull className="w-3.5 h-3.5 text-red-400" /> Doom {gameState.doomTrack}/{gameState.maxDoom}
           </div>
-          <div className="bg-[#1c3326] px-3 py-1 rounded-full border border-[#2b6644] text-emerald-200 flex items-center gap-1 font-semibold">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Gates: {gameState.openGates.length}
+          <div
+            className="bg-[#1c3326] px-2.5 sm:px-3 py-1 rounded-full border border-[#2b6644] text-emerald-200 flex items-center gap-1 font-semibold"
+            title={`Lose if ${gameState.investigators.length <= 3 ? 8 : 7} gates are open at once`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Gates {gameState.openGates.length}/{gameState.investigators.length <= 3 ? 8 : 7}
           </div>
         </div>
 
-        {/* Control Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             onClick={() => {
               const next = !soundEnabled;
@@ -878,199 +794,162 @@ export default function App() {
               sound.enabled = next;
             }}
             className="p-1.5 rounded-lg bg-[#3d2716] hover:bg-[#52341d] text-amber-200 border border-[#785334] transition"
-            title={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
+            title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+            aria-label={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
           >
             {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-stone-400" />}
           </button>
           <button
             onClick={() => setIsRulesOpen(true)}
-            className="flex items-center gap-1.5 bg-[#3d2716] hover:bg-[#52341d] text-amber-200 px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-[#785334] transition"
+            className="flex items-center gap-1.5 bg-[#3d2716] hover:bg-[#52341d] text-amber-200 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-[#785334] transition"
           >
-            <BookOpen className="w-3.5 h-3.5 text-amber-400" /> Rules Manual
+            <BookOpen className="w-3.5 h-3.5 text-amber-400" /> <span className="hidden sm:inline">Rules</span>
           </button>
           <button
             onClick={() => setIsNewGameOpen(true)}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-600 hover:to-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-amber-500/50 transition shadow"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-700 to-amber-800 hover:from-amber-600 hover:to-amber-700 text-white px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-serif font-bold border border-amber-500/50 transition shadow"
           >
-            <RotateCcw className="w-3.5 h-3.5" /> New Game
+            <RotateCcw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New Game</span>
           </button>
         </div>
       </header>
 
-      {/* Main Play Area */}
-      <main className="flex-1 p-4 grid grid-cols-1 xl:grid-cols-12 gap-4 max-w-[1720px] mx-auto w-full">
-        {/* Left Column: Game Board (9 cols) */}
-        <div className="xl:col-span-8 flex flex-col gap-3">
+      <main className="flex-1 p-2 sm:p-4 grid grid-cols-1 xl:grid-cols-12 gap-3 sm:gap-4 max-w-[1720px] mx-auto w-full">
+        <div className="xl:col-span-8 flex flex-col gap-3 min-w-0">
           <GameBoard
             gameState={gameState}
             onNodeClick={handleNodeClick}
             onLocationClick={handleLocationClick}
             onOtherWorldClick={worldId => setInspectWorldId(worldId)}
             reachableNodes={reachableNodes}
-            adjacentNodes={adjacentNodes}
             movingPawn={movingPawn}
           />
 
-          {/* Action Controls Toolbar */}
-          <ActionControls
-            gameState={gameState}
-            onRollMovement={handleRollMovement}
-            onTakeTaxi={() => setIsTaxiOpen(true)}
-            onWaitAction={handleWaitAction}
-            onDrawEncounter={handleDrawEncounter}
-            onTriggerCombat={() => {
-              const monstersHere = gameState.activeMonsters.filter(
-                m => m.currentNodeId === activeInvestigator?.locationNodeId
-              );
-              if (monstersHere.length > 0) setActiveCombatMonster(monstersHere[0]);
-            }}
-            onEndInvestigatorTurn={handleEndInvestigatorTurn}
-            onAdvanceMythos={handleAdvanceMythos}
-            onEndMovementEarly={handleEndMovementEarly}
-          />
+          <div className="sticky bottom-2 z-30">
+            <ActionControls
+              gameState={gameState}
+              isBusy={isMoving}
+              onRollMovement={handleRollMovement}
+              onTakeTaxi={() => setTaxiMode('paid')}
+              onDrive={() => setTaxiMode('car')}
+              onWaitAction={handleWaitAction}
+              onDrawEncounter={handleDrawEncounter}
+              onOpenGate={handleDrawEncounter}
+              onTriggerCombat={handleTriggerCombat}
+              onEndInvestigatorTurn={handleEndInvestigatorTurn}
+              onAdvanceMythos={handleAdvanceMythos}
+              onEndMovementEarly={handleEndMovementEarly}
+              onExploreOtherWorld={handleExploreOtherWorld}
+            />
+          </div>
         </div>
 
-        {/* Right Column: Character Dashboard & Chronicle Log (4 cols) */}
-        <div className="xl:col-span-4 flex flex-col gap-3">
-          {/* Character Selector Tabs */}
+        <div className="xl:col-span-4 flex flex-col gap-3 min-w-0">
           <div className="flex gap-1 bg-[#241710] p-1.5 rounded-xl border border-[#785334] overflow-x-auto">
             {gameState.investigators.map((inv, idx) => {
-              const isActive = idx === gameState.activeInvestigatorIndex;
+              const isActive = idx === activeIdx;
               const isSelected = idx === selectedInvestigatorIdx;
-
               return (
                 <button
                   key={inv.id}
                   onClick={() => setSelectedInvestigatorIdx(idx)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-serif font-bold transition flex-1 truncate ${
-                    isSelected
-                      ? 'bg-amber-600 text-stone-950 shadow'
-                      : 'bg-[#382314] text-amber-200 hover:bg-[#4a311d]'
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-serif font-bold transition flex-1 min-w-0 ${
+                    isSelected ? 'bg-amber-600 text-stone-950 shadow' : 'bg-[#382314] text-amber-200 hover:bg-[#4a311d]'
                   }`}
                 >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/40"
-                    style={{ backgroundColor: inv.color }}
-                  />
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/40" style={{ backgroundColor: inv.color }} />
                   <span className="truncate">{inv.name}</span>
-                  {isActive && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping ml-auto" />
-                  )}
+                  <span className="ml-auto text-[10px] font-sans font-semibold opacity-80 shrink-0">
+                    {inv.strength}♥ {inv.sanity}✦
+                  </span>
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping shrink-0" />}
                 </button>
               );
             })}
           </div>
 
-          {/* Active / Inspected Character Sheet */}
-          {gameState.investigators[selectedInvestigatorIdx] && (
+          {selectedInvestigator && (
             <InvestigatorSheet
-              investigator={gameState.investigators[selectedInvestigatorIdx]}
-              isActive={selectedInvestigatorIdx === gameState.activeInvestigatorIndex}
-              onCastSpell={() => {}}
-              onUseItem={() => {}}
+              investigator={selectedInvestigator}
+              isActive={selectedInvestigatorIdx === activeIdx}
+              onCastSpell={handleUseCard}
+              onUseItem={handleUseCard}
+              canUseCard={canUseCard}
             />
           )}
 
-          {/* Arkham Gazette Event Chronicle */}
           <LogPanel logs={gameState.log} />
         </div>
       </main>
 
-      {/* ======================================================== */}
       {/* MODALS */}
-      {/* ======================================================== */}
-
-      {/* 3D Physical Dice Roller Modal */}
       <DiceRoller
-        isOpen={isDiceRollerOpen}
-        onClose={() => setIsDiceRollerOpen(false)}
-        dice={diceRollerData.dice}
-        title={diceRollerData.title}
-        description={diceRollerData.description}
+        isOpen={dice.open}
+        onClose={() => setDice(d => ({ ...d, open: false }))}
+        dice={dice.dice}
+        title={dice.title}
+        description={dice.description}
+        autoCloseMs={1100}
       />
 
-      {/* Rules Reference Manual Modal */}
       <RulesModal isOpen={isRulesOpen} onClose={() => setIsRulesOpen(false)} />
 
-      {/* New Game Setup Modal */}
-      <NewGameModal
-        isOpen={isNewGameOpen}
-        onStartGame={handleStartNewGame}
-        onClose={() => setIsNewGameOpen(false)}
-      />
+      <NewGameModal isOpen={isNewGameOpen} onStartGame={handleStartNewGame} onClose={() => setIsNewGameOpen(false)} />
 
-      {/* Taxi Fast Travel Modal */}
       <TaxiModal
-        isOpen={isTaxiOpen}
+        isOpen={taxiMode !== null}
+        title={taxiMode === 'paid' ? 'Arkham Yellow Cab' : taxiMode === 'car' ? 'Drive your Automobile' : 'Free Ride'}
+        subtitle={taxiMode === 'paid' ? 'Fare: $1 — ride straight to any location or taxi stand.' : 'Choose where to go — no charge.'}
+        monsterNodeIds={gameState.activeMonsters.map(m => m.currentNodeId)}
+        gateLocationIds={gameState.openGates.map(g => g.locationId)}
         onSelectDestination={handleSelectTaxiDestination}
-        onClose={() => setIsTaxiOpen(false)}
+        onClose={() => setTaxiMode(null)}
       />
 
-      {/* Other Worlds Card Viewer Modal */}
-      <OtherWorldModal
-        worldId={inspectWorldId}
-        onClose={() => setInspectWorldId(null)}
-      />
+      <OtherWorldModal worldId={inspectWorldId} onClose={() => setInspectWorldId(null)} />
 
-      {/* Combat Resolution Modal */}
-      {activeCombatMonster && activeInvestigator && (
+      {combat && combatInvestigator && (
         <CombatModal
-          investigator={activeInvestigator}
-          monster={activeCombatMonster}
+          key={`${combat.monster.id}_${combat.investigatorId}`}
+          investigator={combatInvestigator}
+          monster={combat.monster}
           onVictory={handleCombatVictory}
-          onFlee={() => {
-            setActiveCombatMonster(null);
-            addLog(`${activeInvestigator.name} successfully sneaked away from ${activeCombatMonster.name}!`);
-          }}
-          onDefeat={updated => {
-            setActiveCombatMonster(null);
-            addLog(`${updated.name} fell in combat and was taken to St. Mary's Hospital!`, 'combat');
-            const invs = [...gameState.investigators];
-            invs[gameState.activeInvestigatorIndex] = {
-              ...updated,
-              locationNodeId: 'LOC_HOSPITAL',
-              isInHospital: true
-            };
-            setGameState(prev => ({ ...prev, investigators: invs }));
-          }}
-          onClose={() => setActiveCombatMonster(null)}
+          onFlee={handleCombatFlee}
+          onDefeat={handleCombatDefeat}
           onUpdateInvestigator={updated => {
-            const invs = [...gameState.investigators];
-            invs[gameState.activeInvestigatorIndex] = updated;
-            setGameState(prev => ({ ...prev, investigators: invs }));
+            const s = cur();
+            commit(patchInvestigator(s, getInvestigatorIndex(s, updated.id), () => updated));
           }}
         />
       )}
 
-      {/* Location Encounter Modal */}
-      {activeEncounter && activeInvestigator && (
+      {encounter && encounterInvestigator && !dice.open && (
         <EncounterModal
-          location={LOCATIONS_DATA[activeEncounter.locationId]}
-          roll={activeEncounter.roll}
-          event={activeEncounter.event}
-          investigator={activeInvestigator}
+          key={encounter.uid}
+          variant={encounter.kind === 'otherworld' ? 'otherworld' : 'gazette'}
+          title={encounter.title}
+          subtitle={encounter.subtitle}
+          roll={encounter.roll}
+          text={encounter.event.text}
+          options={encounter.options}
+          investigator={encounterInvestigator}
           onResolve={handleResolveEncounter}
-          onClose={() => setActiveEncounter(null)}
         />
       )}
 
-      {/* Dimensional Gate Modal */}
-      {activeGateModal && activeInvestigator && (
+      {activeGate && activeInvestigator && (
         <GateModal
-          gate={activeGateModal}
+          gate={activeGate}
           investigator={activeInvestigator}
           onEnterGate={handleEnterGate}
           onDestroyGate={handleDestroyGate}
           onSealWithElderSign={handleSealWithElderSign}
-          onClose={() => setActiveGateModal(null)}
+          onAttackFailed={handleGateAttackFailed}
+          onClose={() => setGateModalId(null)}
         />
       )}
 
-      {/* Game Over / Victory Modal */}
-      <GameOverModal
-        winner={gameState.winner}
-        onRestart={() => setIsNewGameOpen(true)}
-      />
+      <GameOverModal winner={gameState.winner} onRestart={() => setIsNewGameOpen(true)} />
     </div>
   );
 }

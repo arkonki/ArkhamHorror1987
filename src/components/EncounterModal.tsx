@@ -1,117 +1,149 @@
-import React from 'react';
-import { LocationData, LocationEvent, Investigator } from '../types/game';
-import { Newspaper, Dices, Check, ArrowRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { Investigator } from '../types/game';
+import { Newspaper, Dices, Check, Sparkles, CheckCircle, XCircle, ArrowRight } from 'lucide-react';
+import { EncounterOption, Outcome, describeOutcome, getCheckTarget } from '../game/encounters';
+import { rollD6 } from '../game/engine';
+import { sound } from '../utils/audio';
 
 interface EncounterModalProps {
-  location: LocationData;
+  variant: 'gazette' | 'otherworld';
+  title: string;
+  subtitle?: string;
   roll: number;
-  event: LocationEvent;
+  text: string;
+  options: EncounterOption[];
   investigator: Investigator;
-  onResolve: (event: LocationEvent) => void;
-  onClose: () => void;
+  onResolve: (outcome: Outcome | undefined, cost: number, summary: string) => void;
 }
 
 export const EncounterModal: React.FC<EncounterModalProps> = ({
-  location,
+  variant,
+  title,
+  subtitle,
   roll,
-  event,
+  text,
+  options,
   investigator,
-  onResolve,
-  onClose
+  onResolve
 }) => {
+  const [checkResult, setCheckResult] = useState<{
+    label: string;
+    roll: number;
+    target: number;
+    passed: boolean;
+    outcome: Outcome;
+  } | null>(null);
+
+  const isOW = variant === 'otherworld';
+
+  const choose = (opt: EncounterOption) => {
+    if (opt.check) {
+      sound.playDiceRoll();
+      const target = getCheckTarget(investigator, opt.check.skill);
+      const r = rollD6();
+      const passed = r <= target;
+      setCheckResult({
+        label: opt.label,
+        roll: r,
+        target,
+        passed,
+        outcome: passed ? opt.check.success : opt.check.failure
+      });
+      return;
+    }
+    onResolve(opt.outcome, opt.cost || 0, opt.label);
+  };
+
+  const toneClass = (tone?: EncounterOption['tone']) => {
+    if (tone === 'danger') return 'bg-gradient-to-r from-red-800 to-rose-900 hover:from-red-700 hover:to-rose-800 text-white';
+    if (tone === 'neutral') return isOW ? 'bg-[#2b1a38] hover:bg-[#3a2449] text-purple-100 border border-purple-700' : 'bg-[#efe2cb] hover:bg-[#e6d3b3] text-[#4a2e18] border border-[#bfa280]';
+    return isOW
+      ? 'bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-600 hover:to-indigo-700 text-white'
+      : 'bg-gradient-to-r from-[#5a3a20] to-[#754d2a] hover:from-[#6d4626] hover:to-[#8a5b32] text-white';
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#fcf7ec] text-[#2c1d11] border-4 border-[#5a3e2b] rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative">
-        {/* Newspaper Masthead */}
-        <div className="bg-[#2a1a10] text-[#f4edd9] px-6 py-4 text-center border-b-2 border-[#8c6b45]">
-          <div className="flex items-center justify-center gap-2 text-xs uppercase tracking-widest text-amber-300 mb-0.5">
-            <Newspaper className="w-4 h-4" /> The Arkham Gazette — Special Bulletin
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true">
+      <div
+        className={`w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl shadow-2xl border-4 ${
+          isOW ? 'bg-[#1c121e] text-[#f5ecd8] border-purple-600' : 'bg-[#fcf7ec] text-[#2c1d11] border-[#5a3e2b]'
+        }`}
+      >
+        <div className={`px-5 py-4 text-center border-b-2 ${isOW ? 'bg-gradient-to-r from-purple-950 via-[#381647] to-purple-950 border-purple-700' : 'bg-[#2a1a10] text-[#f4edd9] border-[#8c6b45]'}`}>
+          <div className={`flex items-center justify-center gap-2 text-[11px] uppercase tracking-widest mb-0.5 ${isOW ? 'text-purple-300' : 'text-amber-300'}`}>
+            {isOW ? <Sparkles className="w-4 h-4" /> : <Newspaper className="w-4 h-4" />}
+            {isOW ? 'Other World Encounter' : 'The Arkham Gazette'}
           </div>
-          <h2 className="font-serif font-black text-2xl tracking-wide text-amber-100">
-            {location.name}
-          </h2>
-          <p className="text-[11px] text-[#caa888] font-sans italic mt-0.5">
-            {location.description}
-          </p>
+          <h2 className={`font-serif font-black text-2xl tracking-wide ${isOW ? 'text-purple-100' : 'text-amber-100'}`}>{title}</h2>
+          {subtitle && <p className={`text-[11px] italic mt-0.5 ${isOW ? 'text-purple-300' : 'text-[#caa888]'}`}>{subtitle}</p>}
         </div>
 
-        {/* Gazette Body */}
-        <div className="p-6 space-y-4">
-          {/* Roll Badge */}
-          <div className="flex items-center justify-between bg-[#f0e4cf] border border-[#a88d6f] px-3.5 py-2 rounded-lg">
-            <span className="text-xs font-serif font-bold text-[#5c3e24] flex items-center gap-1.5">
-              <Dices className="w-4 h-4 text-[#8a5d3b]" /> D6 Event Die Roll:
+        <div className="p-5 space-y-4">
+          <div className={`flex items-center justify-between px-3.5 py-2 rounded-lg border ${isOW ? 'bg-[#2a1338] border-purple-700' : 'bg-[#f0e4cf] border-[#a88d6f]'}`}>
+            <span className="text-xs font-serif font-bold flex items-center gap-1.5">
+              <Dices className="w-4 h-4" /> {investigator.name} rolled
             </span>
-            <span className="bg-[#422917] text-white font-bold text-sm w-7 h-7 rounded-full flex items-center justify-center shadow">
+            <span className={`font-bold text-sm w-7 h-7 rounded-full flex items-center justify-center shadow ${isOW ? 'bg-purple-700 text-white' : 'bg-[#422917] text-white'}`}>
               {roll}
             </span>
           </div>
 
-          {/* Event Narrative Text */}
-          <div className="border-l-4 border-[#8c6b45] pl-4 py-2 bg-[#fdfaf3] text-[#3d2716] text-sm leading-relaxed font-serif">
-            "{event.text}"
+          <div className={`border-l-4 pl-4 py-2 text-sm leading-relaxed font-serif ${isOW ? 'border-purple-500 bg-[#241724] text-purple-50' : 'border-[#8c6b45] bg-[#fdfaf3] text-[#3d2716]'}`}>
+            “{text}”
           </div>
 
-          {/* Reward / Outcome Preview */}
-          {event.reward && (
-            <div className="bg-[#eedec4] border border-[#bfa280] p-3 rounded-lg text-xs space-y-1">
-              <span className="font-bold text-[#4a2e18] uppercase tracking-wider block text-[10px]">
-                Potential Consequence / Reward:
-              </span>
-              <div className="flex flex-wrap gap-2 text-[#3b2413]">
-                {event.reward.money && (
-                  <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded font-bold">
-                    {event.reward.money > 0 ? `+$${event.reward.money}` : `-$${Math.abs(event.reward.money)}`}
-                  </span>
-                )}
-                {event.reward.strength && (
-                  <span className="bg-rose-100 text-rose-800 border border-rose-300 px-2 py-0.5 rounded font-bold">
-                    {event.reward.strength > 0 ? `+${event.reward.strength} Strength` : `${event.reward.strength} Strength`}
-                  </span>
-                )}
-                {event.reward.sanity && (
-                  <span className="bg-blue-100 text-blue-800 border border-blue-300 px-2 py-0.5 rounded font-bold">
-                    {event.reward.sanity > 0 ? `+${event.reward.sanity} Sanity` : `${event.reward.sanity} Sanity`}
-                  </span>
-                )}
-                {event.reward.itemsCount && (
-                  <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded font-bold">
-                    +{event.reward.itemsCount} Item Card(s)
-                  </span>
-                )}
-                {event.reward.spellsCount && (
-                  <span className="bg-purple-100 text-purple-800 border border-purple-300 px-2 py-0.5 rounded font-bold">
-                    +{event.reward.spellsCount} Spell Card(s)
-                  </span>
-                )}
-                {event.reward.retainer && (
-                  <span className="bg-indigo-100 text-indigo-800 border border-indigo-300 px-2 py-0.5 rounded font-bold">
-                    +Retainer ($2 / Turn)
-                  </span>
-                )}
-                {event.reward.monsterSpawn && (
-                  <span className="bg-red-200 text-red-900 border border-red-400 px-2 py-0.5 rounded font-bold">
-                    A Monster Appears!
-                  </span>
-                )}
-                {event.reward.gateSpawn && (
-                  <span className="bg-purple-200 text-purple-900 border border-purple-400 px-2 py-0.5 rounded font-bold">
-                    Dimensional Gate Opens!
-                  </span>
-                )}
-              </div>
+          {!checkResult && (
+            <div className="space-y-2 pt-1">
+              {options.map(opt => {
+                const tooPoor = (opt.cost || 0) > investigator.money;
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => choose(opt)}
+                    disabled={tooPoor}
+                    className={`w-full text-left px-4 py-3 rounded-xl shadow transition flex items-center justify-between gap-3 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed ${toneClass(opt.tone)}`}
+                  >
+                    <span>
+                      <span className="block">{opt.label}</span>
+                      {(opt.detail || tooPoor) && (
+                        <span className="block text-[11px] font-normal opacity-80 mt-0.5">
+                          {tooPoor ? `Not enough money (you have $${investigator.money})` : opt.detail}
+                        </span>
+                      )}
+                    </span>
+                    {opt.check ? <Dices className="w-5 h-5 shrink-0" /> : <ArrowRight className="w-5 h-5 shrink-0" />}
+                  </button>
+                );
+              })}
             </div>
           )}
 
-          {/* Action Resolution Button */}
-          <div className="pt-2">
-            <button
-              onClick={() => onResolve(event)}
-              className="w-full bg-gradient-to-r from-[#5a3a20] to-[#754d2a] hover:from-[#6d4626] hover:to-[#8a5b32] text-white font-bold py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-sm"
-            >
-              <Check className="w-5 h-5 text-amber-300" /> Accept Event Outcome
-            </button>
-          </div>
+          {checkResult && (
+            <div className="space-y-3">
+              <div
+                className={`p-3 rounded-lg text-sm flex items-start gap-2 border ${
+                  checkResult.passed ? 'bg-emerald-50 border-emerald-400 text-emerald-900' : 'bg-rose-50 border-rose-400 text-rose-900'
+                }`}
+              >
+                {checkResult.passed ? <CheckCircle className="w-5 h-5 shrink-0" /> : <XCircle className="w-5 h-5 shrink-0" />}
+                <div>
+                  <div className="font-bold">
+                    {checkResult.label}: rolled {checkResult.roll} vs {checkResult.target} — {checkResult.passed ? 'Success!' : 'Failed!'}
+                  </div>
+                  <div className="text-xs mt-0.5">Result: {describeOutcome(checkResult.outcome)}</div>
+                </div>
+              </div>
+              <button
+                autoFocus
+                onClick={() =>
+                  onResolve(checkResult.outcome, 0, `${checkResult.label} ${checkResult.passed ? 'succeeded' : 'failed'}`)
+                }
+                className={`w-full font-bold py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-sm ${toneClass('primary')}`}
+              >
+                <Check className="w-5 h-5" /> Continue
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

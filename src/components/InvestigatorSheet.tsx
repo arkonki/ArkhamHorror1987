@@ -1,20 +1,27 @@
 import React from 'react';
 import { Investigator, Card, Monster, Gate } from '../types/game';
-import { Shield, Brain, DollarSign, Award, Scroll, Sword, Sparkles, Key, HeartPulse, User } from 'lucide-react';
+import { Shield, Brain, DollarSign, Award, Scroll, Sword, Sparkles } from 'lucide-react';
+import { getNodeDisplayLabel } from '../data/boardGraph';
+import { OTHER_WORLDS } from '../data/rules1987';
+import { getEffectiveStats } from '../game/engine';
 
 interface InvestigatorSheetProps {
   investigator: Investigator;
   isActive: boolean;
   onUseItem?: (item: Card) => void;
   onCastSpell?: (spell: Card) => void;
+  canUseCard?: (card: Card) => boolean;
 }
 
 export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
   investigator,
   isActive,
   onUseItem,
-  onCastSpell
+  onCastSpell,
+  canUseCard
 }) => {
+  const stats = getEffectiveStats(investigator);
+  const usable = (card: Card) => !!canUseCard && canUseCard(card);
   const colorBorders: Record<string, string> = {
     red: 'border-red-600 ring-red-400',
     blue: 'border-blue-600 ring-blue-400',
@@ -53,10 +60,18 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
               )}
             </h3>
             <p className="text-xs text-[#714f33] font-sans">
-              Location: <span className="font-semibold">{investigator.locationNodeId.replace('node_', '').replace(/_/g, ' ')}</span>
-              {investigator.otherWorldState && (
-                <span className="text-purple-700 font-bold ml-1">
-                  (Other World: Box {investigator.otherWorldState.box})
+              {investigator.otherWorldState ? (
+                <span className="text-purple-700 font-bold">
+                  In {OTHER_WORLDS[investigator.otherWorldState.worldId as keyof typeof OTHER_WORLDS]?.name} · Box {investigator.otherWorldState.box}
+                </span>
+              ) : (
+                <>
+                  Location: <span className="font-semibold">{getNodeDisplayLabel(investigator.locationNodeId)}</span>
+                </>
+              )}
+              {(investigator.skipTurns || 0) > 0 && (
+                <span className="text-rose-700 font-bold ml-1">
+                  · {investigator.isInJail ? 'In jail' : 'Loses next turn'}
                 </span>
               )}
             </p>
@@ -156,19 +171,19 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
       <div className="bg-[#ede2cb] p-2 rounded-lg border border-[#8c6b45]/30 mb-3 text-xs flex justify-around font-sans">
         <div>
           <span className="text-[#714f33]">Fight:</span>{' '}
-          <strong className="text-[#3b2413]">+{investigator.stats.fightSkill}</strong>
+          <strong className="text-[#3b2413]">+{stats.fight}</strong>
         </div>
         <div>
           <span className="text-[#714f33]">Sneak:</span>{' '}
-          <strong className="text-[#3b2413]">≤{investigator.stats.sneakSkill}</strong>
+          <strong className="text-[#3b2413]">≤{stats.sneak}</strong>
         </div>
         <div>
           <span className="text-[#714f33]">Knowledge:</span>{' '}
-          <strong className="text-[#3b2413]">≤{investigator.stats.knowledgeSkill}</strong>
+          <strong className="text-[#3b2413]">≤{stats.knowledge}</strong>
         </div>
         <div>
           <span className="text-[#714f33]">Fast Talk:</span>{' '}
-          <strong className="text-[#3b2413]">≤{investigator.stats.fastTalkSkill}</strong>
+          <strong className="text-[#3b2413]">≤{stats.fastTalk}</strong>
         </div>
       </div>
 
@@ -183,7 +198,12 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
             {investigator.items.map(item => (
               <div
                 key={item.id}
-                className="group relative bg-white border border-[#b48d61] px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm hover:border-amber-600 transition"
+                role={usable(item) ? 'button' : undefined}
+                tabIndex={usable(item) ? 0 : undefined}
+                onClick={() => usable(item) && onUseItem?.(item)}
+                className={`group relative bg-white border px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm hover:border-amber-600 transition ${
+                  usable(item) ? 'border-emerald-600 ring-2 ring-emerald-300 cursor-pointer' : 'border-[#b48d61]'
+                }`}
               >
                 <span className="font-medium text-[#2d1b0d]">{item.name}</span>
                 {item.fightBonus && (
@@ -201,6 +221,7 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
                   <p className="font-bold">{item.name}</p>
                   <p className="mt-0.5">{item.description}</p>
                   {item.price && <p className="text-amber-400 mt-1">Value: ${item.price}</p>}
+                  {usable(item) && <p className="text-emerald-300 mt-1 font-bold">Click to use</p>}
                 </div>
               </div>
             ))}
@@ -219,7 +240,12 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
             {investigator.spells.map(spell => (
               <div
                 key={spell.id}
-                className="group relative bg-[#f5f3ff] border border-purple-300 px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm hover:border-purple-600 transition"
+                role={usable(spell) ? 'button' : undefined}
+                tabIndex={usable(spell) ? 0 : undefined}
+                onClick={() => usable(spell) && onCastSpell?.(spell)}
+                className={`group relative bg-[#f5f3ff] border px-2 py-1 rounded text-xs flex items-center gap-1 shadow-sm hover:border-purple-600 transition ${
+                  usable(spell) ? 'border-emerald-600 ring-2 ring-emerald-300 cursor-pointer' : 'border-purple-300'
+                }`}
               >
                 <Sparkles className="w-3 h-3 text-purple-600" />
                 <span className="font-medium text-purple-950">{spell.name}</span>
@@ -235,6 +261,7 @@ export const InvestigatorSheet: React.FC<InvestigatorSheetProps> = ({
                   {spell.sanityCost !== undefined && (
                     <p className="text-rose-400 mt-1">Cost: {spell.sanityCost} Sanity</p>
                   )}
+                  {usable(spell) && <p className="text-emerald-300 mt-1 font-bold">Click to cast</p>}
                 </div>
               </div>
             ))}
